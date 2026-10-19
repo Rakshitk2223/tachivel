@@ -62,6 +62,7 @@ function resolvePath(base, rel) {
 }
 function parseXml(str) { return new DOMParser().parseFromString(str, "application/xml"); }
 function parseHtml(str) {
+  str = str.replace(/<style[\s\S]*?<\/style>/gi, ""); // book styles are never used, and the CSP would flag each one
   let d = new DOMParser().parseFromString(str, "application/xhtml+xml");
   if (d.getElementsByTagName("parsererror").length) d = new DOMParser().parseFromString(str, "text/html");
   return d;
