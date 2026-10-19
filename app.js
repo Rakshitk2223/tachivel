@@ -138,6 +138,13 @@ function ncxRows(parent, depth, base, rows) {
   }
 }
 
+// Only plain raster pictures become blob URLs; a book can't smuggle in HTML/SVG labelled as an image.
+const RASTER = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp", avif: "image/avif" };
+function imageType(path, declared) {
+  if (Object.values(RASTER).includes(declared)) return declared;
+  return RASTER[path.split(".").pop().toLowerCase()] || null;
+}
+
 async function parseEpub(file, onProgress) {
   const zip = await JSZip.loadAsync(file);
   const entry = (p) => zip.file(p) || zip.file(decodeURIComponent(p));
@@ -204,7 +211,9 @@ async function parseEpub(file, onProgress) {
         if (imageIndex[key] == null) {
           const f = entry(key);
           if (!f) continue;
-          const blob = new Blob([await f.async("arraybuffer")], { type: typeByPath[key] || "image/jpeg" });
+          const type = imageType(key, typeByPath[key]);
+          if (!type) continue; // not a plain picture (e.g. SVG/HTML): never turn it into a page-origin blob
+          const blob = new Blob([await f.async("arraybuffer")], { type });
           imageIndex[key] = images.push({ ch: chapters.length, s: s.length, alt: c[1].alt, cap: c[1].cap || "", blob }) - 1;
         }
         b.push([IMAGE, imageIndex[key]]);
