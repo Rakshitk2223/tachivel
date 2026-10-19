@@ -961,6 +961,8 @@ function wire() {
     else schedulePush(true);
   });
   addEventListener("focus", () => syncNow());
+  // While open and paused, look for a newer place every 30 s (e.g. the laptop just moved on).
+  setInterval(() => { if (document.visibilityState === "visible" && !playing) syncNow(); }, 30000);
 
   // Chrome stops speech silently in background tabs after ~15s of one utterance; per-sentence queueing avoids most of it.
   addEventListener("pagehide", () => speechSynthesis.cancel());
