@@ -638,13 +638,15 @@ function showLoading(text) {
 }
 const hideLoading = () => ($("loading").hidden = true);
 // Parse an EPUB (a dropped file or a download from your library), save it on this device and show it.
-async function openBook(file, { cloud: cloudId = null } = {}) {
+async function openBook(file, { cloud: cloudId = null, name = null } = {}) {
   const parsed = await parseEpub(file, (i, n) => {
     $("loadingText").textContent = `Reading the book… ${i} / ${n}`;
     $("loadingBar").style.width = `${(i / n) * 100}%`;
   });
   parsed.cloud = cloudId;
   await dbPut("current", parsed);
+  // Keep the original file too, so "Download EPUB" works offline and hands over the exact bytes.
+  await dbPut("epub", { id: parsed.id, blob: file, name: name || file.name || `${parsed.title}.epub` }).catch(() => {});
   // Same book (by title) = a newer build: keep the place. A different book starts at the beginning.
   const same = (state.bookId || "").split("|")[0] === parsed.title;
   state.bookId = parsed.id;
@@ -674,6 +676,7 @@ function showBook(b) {
   $("empty").hidden = true;
   $("text").hidden = false;
   $("goto").disabled = false;
+  $("downloadBtn").hidden = false;
   imageUrls.forEach((u) => URL.revokeObjectURL(u));
   imageUrls = (b.images || []).map((im) => URL.createObjectURL(im.blob));
   const place = findPlace(b);
@@ -704,6 +707,49 @@ function findPlace(b) {
     if (best >= 0) s = best;
   }
   return { ch, s: Math.max(0, s) };
+}
+
+// ---------- Download the EPUB (e.g. into Apple Books or Files on an iPad or iPhone) ----------
+async function cloudEpub() {
+  const m = await apiJSON("GET", "/api/book");
+  if (!m) throw new Error("Your library is empty.");
+  showLoading("Getting the EPUB…");
+  try {
+    const parts = [];
+    for (let i = 0; i < m.parts; i++) {
+      parts.push(await apiBinary("GET", `/api/book/parts/${m.upload}/${i}`));
+      $("loadingBar").style.width = `${((i + 1) / m.parts) * 100}%`;
+    }
+    return { blob: new Blob(parts, { type: "application/epub+zip" }), name: m.name };
+  } finally { hideLoading(); }
+}
+async function downloadEpub() {
+  if (!book) return;
+  let saved = await dbGet("epub").catch(() => null);
+  let fetched = false;
+  if (saved?.id !== book.id) {
+    if (cloud !== "in") { toast("This book was opened before downloads existed. Sign in, or open the file once more."); return; }
+    try { saved = await cloudEpub(); fetched = true; }
+    catch (err) { toast(`Couldn't get the EPUB: ${err.message}`); return; }
+  }
+  const name = (saved.name || `${book.title}.epub`).replace(/[\\/:*?"<>|]+/g, " ").trim();
+  const file = new File([saved.blob], /\.epub$/i.test(name) ? name : `${name}.epub`, { type: "application/epub+zip" });
+  // Phones and iPads: the share sheet offers Books and "Save to Files". Desktops: a normal download.
+  if (matchMedia("(pointer: coarse)").matches && navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return; }
+    catch (err) {
+      if (err.name === "AbortError") return; // closed the share sheet
+      // Safari wants a fresh tap after a slow fetch: keep the file so the next tap is instant.
+      if (fetched) { await dbPut("epub", { id: book.id, blob: saved.blob, name: saved.name }).catch(() => {}); toast("EPUB ready. Tap Download EPUB again."); return; }
+    }
+  }
+  const a = node("a");
+  a.href = URL.createObjectURL(file);
+  a.download = file.name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
 }
 
 // ---------- Cloud library: sign in once, and the book and your place follow you ----------
@@ -832,8 +878,10 @@ function setCloud(c) {
   cloud = c;
   const btn = $("accountBtn");
   btn.hidden = c === "off";
-  btn.textContent = c === "in" ? "Library: synced" : c === "error" ? "Library: can't reach server" : "Sign in";
+  $("accountLabel").textContent = c === "out" ? "Sign in" : "Library";
+  $("accountHint").textContent = c === "in" ? "Synced across your devices" : c === "error" ? "Can't reach the server" : "Get your book and place on every device";
   btn.classList.toggle("bad", c === "error");
+  $("syncDot").className = `dot ${c === "in" ? "in" : c === "error" ? "bad" : ""}`;
   // Signed out with no book here (a new phone or iPad): signing in is the main action.
   const signInFirst = c === "out";
   $("emptySignIn").hidden = !signInFirst;
@@ -950,6 +998,19 @@ function wire() {
     else if (k === "]" || k === "=" || k === "+") { e.preventDefault(); $("rateUp").click(); }
   });
 
+  $("downloadBtn").onclick = downloadEpub;
+  // Sidebar "Book & library" menu: opens upward from the footer; any choice, an outside tap or Escape closes it.
+  const setMenu = (open) => {
+    $("moreMenu").hidden = !open;
+    $("moreBtn").setAttribute("aria-expanded", open);
+    if (open) $("moreMenu").querySelector("button:not([hidden])")?.focus();
+  };
+  $("moreBtn").onclick = () => setMenu($("moreMenu").hidden);
+  $("moreMenu").addEventListener("click", (e) => { if (e.target.closest("button")) setMenu(false); });
+  document.addEventListener("pointerdown", (e) => { if (!$("moreMenu").hidden && !e.target.closest(".side-foot")) setMenu(false); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("moreMenu").hidden) { setMenu(false); $("moreBtn").focus(); }
+  });
   $("accountBtn").onclick = openAccount;
   $("emptySignIn").onclick = openAccount;
   $("loginForm").onsubmit = signIn;
@@ -957,8 +1018,11 @@ function wire() {
   $("signOutAllBtn").onclick = () => signOut(true);
   // Check for a newer book and place whenever Tachivel comes back to the front.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") syncNow();
-    else schedulePush(true);
+    if (document.visibilityState === "visible") {
+      // iPhone/iPad stop speech when the app goes to the background; carry on from the same sentence on return.
+      if (playing && (speechSynthesis.paused || !speechSynthesis.speaking)) speakCurrent();
+      syncNow();
+    } else schedulePush(true);
   });
   addEventListener("focus", () => syncNow());
   // While open and paused, look for a newer place every 30 s (e.g. the laptop just moved on).

@@ -33,8 +33,25 @@
     </div>
     <div class="gallery" id="gallery" hidden></div>
     <div class="side-foot">
-      <button class="link" id="openBtn" type="button">Open another book</button>
-      <button class="link" id="accountBtn" type="button" hidden>Sign in</button>
+      <div class="menu-pop" id="moreMenu" role="menu" aria-label="Book and library" hidden>
+        <button type="button" role="menuitem" id="downloadBtn" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3h2v10.2l3.6-3.6L18 11l-6 6-6-6 1.4-1.4 3.6 3.6zM5 19h14v2H5z"/></svg>
+          <span class="lbl">Download EPUB</span><span class="hint">Save a copy to Books or Files</span>
+        </button>
+        <button type="button" role="menuitem" id="openBtn">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/></svg>
+          <span class="lbl">Open another book</span><span class="hint">An EPUB on this device</span>
+        </button>
+        <button type="button" role="menuitem" id="accountBtn" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 10A7.5 7.5 0 0 0 5.4 8 6 6 0 0 0 6 20h13a5 5 0 0 0 .4-10z"/></svg>
+          <span class="lbl" id="accountLabel">Sign in</span><span class="hint" id="accountHint"></span>
+        </button>
+      </div>
+      <button class="more" id="moreBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="moreMenu">
+        <span class="dot" id="syncDot" aria-hidden="true"></span>
+        <span>Book &amp; library</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 15.4 12 10.8l4.6 4.6L18 14l-6-6-6 6z"/></svg>
+      </button>
       <input id="file" type="file" accept=".epub,application/epub+zip" hidden>
     </div>
   </aside>
