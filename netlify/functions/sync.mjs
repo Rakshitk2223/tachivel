@@ -65,4 +65,5 @@ export async function handle(req, store) {
   return json({ error: "Use GET or PUT." }, 405);
 }
 
-export default (req) => handle(req, getStore("bookmarks"));
+// Strong consistency: a phone reading right after the Mac writes must see the new place, not a minute-old one.
+export default (req) => handle(req, getStore({ name: "bookmarks", consistency: "strong" }));
