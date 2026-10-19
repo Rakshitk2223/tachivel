@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { handle, PART_MAX } from "../netlify/lib/core.mjs";
+import { handle, PART_MAX, networkOf } from "../netlify/lib/core.mjs";
 
 // In-memory stand-in for a Netlify Blobs store.
 function memoryStore() {
-  const m = new Map();
+  const m = new Map(), etags = new Map();
+  let ver = 0;
   return {
     m,
     async get(k, opts) {
@@ -13,13 +14,18 @@ function memoryStore() {
       return opts?.type === "json" ? JSON.parse(v) : v;
     },
     async getMetadata(k) { return m.has(k) ? {} : null; },
-    async set(k, v) { m.set(k, v); },
-    async setJSON(k, v) { m.set(k, JSON.stringify(v)); },
+    async getWithMetadata(k, o) { if (!m.has(k)) return null; const v = m.get(k); return { data: o?.type === "json" ? JSON.parse(v) : v, etag: etags.get(k) }; },
+    async set(k, v) { m.set(k, v); etags.set(k, String(++ver)); return { modified: true }; },
+    async setJSON(k, v, o = {}) {
+      if (o.onlyIfNew && m.has(k)) return { modified: false };
+      if (o.onlyIfMatch && etags.get(k) !== o.onlyIfMatch) return { modified: false };
+      m.set(k, JSON.stringify(v)); etags.set(k, String(++ver)); return { modified: true };
+    },
     async delete(k) { m.delete(k); },
   };
 }
 const PASS = "cultivate the long road";
-function setup() {
+function setup(deps = {}) {
   const stores = { library: memoryStore(), secrets: memoryStore(), limits: memoryStore() };
   let jar = "";
   const call = async (method, path, body, { raw = false, ip = "1.2.3.4", now, cookie } = {}) => {
@@ -28,7 +34,7 @@ function setup() {
     if (c) headers.cookie = c;
     const init = { method, headers };
     if (body !== undefined) init.body = raw ? body : JSON.stringify(body);
-    const res = await handle(new Request(`https://x${path}`, init), { stores, passphrase: PASS, ip, now });
+    const res = await handle(new Request(`https://x${path}`, init), { stores, passphrase: deps.passphrase ?? PASS, ip, now, wrongDelay: 0 });
     const set = res.headers.get("set-cookie");
     if (set) jar = set.split(";")[0];
     return res;
@@ -112,4 +118,46 @@ test("book: rejects oversized parts and path tricks", async () => {
   assert.equal((await t.call("PUT", "/api/book/parts/up1/0", new Uint8Array(PART_MAX + 1), { raw: true })).status, 413);
   assert.equal((await t.call("PUT", "/api/book/parts/../secrets/0", new Uint8Array(1), { raw: true })).status, 404);
   assert.equal((await t.call("PUT", "/api/book", { upload: "../x", parts: 1 })).status, 400);
+});
+
+test("20 parallel guesses can't slip past the 5-try limit", async () => {
+  const t = setup();
+  const res = await Promise.all(Array.from({ length: 20 }, () => t.call("POST", "/api/login", { passphrase: "guess" })));
+  const checked = res.filter((r) => r.status === 401).length;
+  assert.ok(checked <= 5, `${checked} guesses were checked`);
+  assert.equal(res.filter((r) => r.status === 429).length, 20 - checked);
+});
+
+test("guessing from many addresses hits the library-wide limit", async () => {
+  const t = setup();
+  for (let i = 0; i < 30; i++) await t.call("POST", "/api/login", { passphrase: "guess" }, { ip: `10.0.0.${i}` });
+  assert.equal((await t.call("POST", "/api/login", { passphrase: PASS }, { ip: "10.9.9.9" })).status, 429);
+});
+
+test("IPv6 addresses are grouped by /64 network", () => {
+  assert.equal(networkOf("2001:db8:aa:bb:1:2:3:4"), networkOf("2001:db8:aa:bb:ffff::9"));
+  assert.notEqual(networkOf("2001:db8:aa:bb::1"), networkOf("2001:db8:aa:bc::1"));
+  assert.equal(networkOf("2001:0db8:00aa:00bb::1"), "2001:db8:aa:bb::/64");
+  assert.equal(networkOf("203.0.113.7"), "203.0.113.7");
+});
+
+test("changing the passphrase signs every device out", async () => {
+  const deps = {};
+  const t = setup(deps);
+  await t.login();
+  assert.equal((await t.call("GET", "/api/me")).status, 200);
+  deps.passphrase = "a brand new passphrase";
+  assert.equal((await t.call("GET", "/api/me")).status, 401);
+});
+
+test("sign out on all devices revokes the other devices' sessions", async () => {
+  const t = setup();
+  await t.login();
+  const phone = t.jar;
+  await t.call("POST", "/api/login", { passphrase: PASS }, { ip: "9.9.9.9", cookie: "" });
+  const mac = t.jar;
+  assert.equal((await t.call("GET", "/api/me", undefined, { cookie: phone })).status, 200);
+  assert.equal((await t.call("POST", "/api/logout?everywhere=1", undefined, { cookie: "" })).status, 401); // needs a session
+  await t.call("POST", "/api/logout?everywhere=1", undefined, { cookie: mac });
+  assert.equal((await t.call("GET", "/api/me", undefined, { cookie: phone })).status, 401);
 });

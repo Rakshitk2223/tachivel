@@ -865,8 +865,8 @@ async function signIn(e) {
     $("loginError").textContent = err.message;
   } finally { $("loginBtn").disabled = false; }
 }
-async function signOut() {
-  try { await apiJSON("POST", "/api/logout"); } catch {}
+async function signOut(everywhere = false) {
+  try { await apiJSON("POST", everywhere ? "/api/logout?everywhere=1" : "/api/logout"); } catch {}
   setCloud("out");
   $("accountDlg").close();
 }
@@ -953,7 +953,8 @@ function wire() {
   $("accountBtn").onclick = openAccount;
   $("emptySignIn").onclick = openAccount;
   $("loginForm").onsubmit = signIn;
-  $("signOutBtn").onclick = signOut;
+  $("signOutBtn").onclick = () => signOut(false);
+  $("signOutAllBtn").onclick = () => signOut(true);
   // Check for a newer book and place whenever Tachivel comes back to the front.
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") syncNow();

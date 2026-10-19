@@ -3,8 +3,11 @@
 
 const COOKIE = "tv_session";
 const SESSION_DAYS = 180;
-const MAX_FAILS = 5;                      // wrong passphrases allowed per window, per IP
+const MAX_FAILS = 5;                      // sign-in attempts per network per 15 min
 const FAIL_WINDOW = 15 * 60 * 1000;
+const GLOBAL_MAX = 30;                    // attempts per hour from everywhere combined (it's a one-person library)
+const GLOBAL_WINDOW = 60 * 60 * 1000;
+const WRONG_DELAY = 300;                  // ms; slows guessing down
 export const PART_MAX = 4.5 * 1024 * 1024; // a Netlify Function body tops out at 6 MB
 const PARTS_MAX = 20;                     // ~90 MB books
 const THEMES = new Set(["ember", "dark", "light"]);
@@ -29,7 +32,29 @@ async function samePassphrase(given, expected) {
   return diff === 0;
 }
 
+// Group an address by network: an IPv6 /64 is one household, not 2^64 separate guessers.
+export function networkOf(ip) {
+  if (!ip || !ip.includes(":")) return ip || "unknown";
+  const [head, tail = ""] = ip.toLowerCase().split("::");
+  const h = head ? head.split(":") : [], t = tail ? tail.split(":") : [];
+  const full = ip.includes("::") ? [...h, ...Array(8 - h.length - t.length).fill("0"), ...t] : h;
+  return full.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":") + "::/64";
+}
+
+// Add one attempt to a counter with a conflict-checked write, so parallel requests can't all read "0".
+async function countAttempt(limits, key, now, windowMs) {
+  for (let tries = 0; tries < 6; tries++) {
+    const cur = await limits.getWithMetadata(key, { type: "json" });
+    const rec = cur?.data && now - cur.data.since <= windowMs ? cur.data : { n: 0, since: now };
+    const next = { n: rec.n + 1, since: rec.since };
+    const res = cur ? await limits.setJSON(key, next, { onlyIfMatch: cur.etag }) : await limits.setJSON(key, next, { onlyIfNew: true });
+    if (res?.modified !== false) return next.n;
+  }
+  return Infinity; // lots of simultaneous attempts: treat as over the limit
+}
+
 // The signing key is random, created on first use and kept in a private store.
+// Deleting it ("sign out on all devices") makes every existing session invalid.
 async function signingKey(secrets) {
   let raw = await secrets.get("session-key", { type: "arrayBuffer" });
   if (!raw) {
@@ -38,18 +63,21 @@ async function signingKey(secrets) {
   }
   return crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
 }
-async function makeSession(secrets, now) {
+// Sessions are signed over the passphrase's hash too, so changing the passphrase signs every device out.
+const sessionPayload = async (exp, passphrase) => enc.encode(`v2.${exp}.${hex(await sha256(passphrase))}`);
+async function makeSession(secrets, passphrase, now) {
   const exp = now + SESSION_DAYS * 86400 * 1000;
-  const sig = await crypto.subtle.sign("HMAC", await signingKey(secrets), enc.encode(`v1.${exp}`));
+  const sig = await crypto.subtle.sign("HMAC", await signingKey(secrets), await sessionPayload(exp, passphrase));
   return `${exp}.${b64url(sig)}`;
 }
-async function validSession(req, secrets, now) {
+async function validSession(req, secrets, passphrase, now) {
+  if (!passphrase) return false;
   const m = /(?:^|;\s*)tv_session=([^;]+)/.exec(req.headers.get("cookie") || "");
   if (!m) return false;
   const [exp, sig] = m[1].split(".");
   if (!sig || !(Number(exp) > now)) return false;
   try {
-    return await crypto.subtle.verify("HMAC", await signingKey(secrets), fromB64url(sig), enc.encode(`v1.${exp}`));
+    return await crypto.subtle.verify("HMAC", await signingKey(secrets), fromB64url(sig), await sessionPayload(exp, passphrase));
   } catch { return false; }
 }
 const cookie = (value, maxAge) => `${COOKIE}=${value}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
@@ -81,25 +109,34 @@ export async function handle(req, deps) {
 
   if (path === "/api/login" && method === "POST") {
     if (!passphrase) return fail("Tachivel has no passphrase set yet. Add TACHIVEL_PASSPHRASE in Netlify's environment variables.", 503);
-    const limitKey = `fail-${hex(await sha256(ip)).slice(0, 32)}`;
-    const rec = (await stores.limits.get(limitKey, { type: "json" })) || { n: 0, since: now };
-    const fresh = now - rec.since > FAIL_WINDOW ? { n: 0, since: now } : rec;
-    if (fresh.n >= MAX_FAILS) return fail("Too many wrong tries. Wait 15 minutes and try again.", 429);
+    // Count the attempt before checking it, per network and across everyone.
+    const netKey = `net-${hex(await sha256(networkOf(ip))).slice(0, 32)}`;
+    const [mine, everyone] = await Promise.all([
+      countAttempt(stores.limits, netKey, now, FAIL_WINDOW),
+      countAttempt(stores.limits, "all", now, GLOBAL_WINDOW),
+    ]);
+    if (mine > MAX_FAILS) return fail("Too many tries. Wait 15 minutes and try again.", 429);
+    if (everyone > GLOBAL_MAX) return fail("Too many sign-in attempts in the last hour. Devices already signed in keep working; try again later.", 429);
     let given = "";
     try { given = String((await req.json()).passphrase || ""); } catch {}
     if (!given || given.length > 500 || !(await samePassphrase(given, passphrase))) {
-      await stores.limits.setJSON(limitKey, { n: fresh.n + 1, since: fresh.since });
+      await new Promise((r) => setTimeout(r, deps.wrongDelay ?? WRONG_DELAY));
       return fail("That passphrase isn't right.", 401);
     }
-    await stores.limits.delete(limitKey);
-    return json({ in: true }, 200, { "set-cookie": cookie(await makeSession(stores.secrets, now), SESSION_DAYS * 86400) });
+    await stores.limits.delete(netKey);
+    return json({ in: true }, 200, { "set-cookie": cookie(await makeSession(stores.secrets, passphrase, now), SESSION_DAYS * 86400) });
   }
   if (path === "/api/logout" && method === "POST") {
+    // ?everywhere=1 replaces the signing key, so every device's session stops working.
+    if (new URL(req.url).searchParams.get("everywhere") === "1") {
+      if (!(await validSession(req, stores.secrets, passphrase, now))) return fail("Sign in first.", 401);
+      await stores.secrets.delete("session-key");
+    }
     return json({ in: false }, 200, { "set-cookie": cookie("", 0) });
   }
 
   // Everything below needs a session.
-  if (!(await validSession(req, stores.secrets, now))) return fail("Sign in first.", 401);
+  if (!(await validSession(req, stores.secrets, passphrase, now))) return fail("Sign in first.", 401);
   const lib = stores.library;
 
   if (path === "/api/me" && method === "GET") return json({ in: true });

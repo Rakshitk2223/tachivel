@@ -9,12 +9,18 @@ const PORT = 47614;
 const root = new URL(".", import.meta.url).pathname;
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".json": "application/json" };
 function memoryStore() {
-  const m = new Map();
+  const m = new Map(), etags = new Map();
+  let ver = 0;
   return {
     async get(k, o) { if (!m.has(k)) return null; const v = m.get(k); return o?.type === "json" ? JSON.parse(v) : v; },
     async getMetadata(k) { return m.has(k) ? {} : null; },
-    async set(k, v) { m.set(k, v); },
-    async setJSON(k, v) { m.set(k, JSON.stringify(v)); },
+    async getWithMetadata(k, o) { if (!m.has(k)) return null; const v = m.get(k); return { data: o?.type === "json" ? JSON.parse(v) : v, etag: etags.get(k) }; },
+    async set(k, v) { m.set(k, v); etags.set(k, String(++ver)); return { modified: true }; },
+    async setJSON(k, v, o = {}) {
+      if (o.onlyIfNew && m.has(k)) return { modified: false };
+      if (o.onlyIfMatch && etags.get(k) !== o.onlyIfMatch) return { modified: false };
+      m.set(k, JSON.stringify(v)); etags.set(k, String(++ver)); return { modified: true };
+    },
     async delete(k) { m.delete(k); },
   };
 }
