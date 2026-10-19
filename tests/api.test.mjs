@@ -128,6 +128,12 @@ test("20 parallel guesses can't slip past the 5-try limit", async () => {
   assert.equal(res.filter((r) => r.status === 429).length, 20 - checked);
 });
 
+test("traffic already blocked per network doesn't use up the library-wide limit", async () => {
+  const t = setup();
+  for (let i = 0; i < 100; i++) await t.call("POST", "/api/login", { passphrase: "spam" }, { ip: "6.6.6.6" });
+  assert.equal((await t.call("POST", "/api/login", { passphrase: PASS }, { ip: "7.7.7.7" })).status, 200);
+});
+
 test("guessing from many addresses hits the library-wide limit", async () => {
   const t = setup();
   for (let i = 0; i < 30; i++) await t.call("POST", "/api/login", { passphrase: "guess" }, { ip: `10.0.0.${i}` });

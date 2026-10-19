@@ -109,17 +109,20 @@ export async function handle(req, deps) {
 
   if (path === "/api/login" && method === "POST") {
     if (!passphrase) return fail("Tachivel has no passphrase set yet. Add TACHIVEL_PASSPHRASE in Netlify's environment variables.", 503);
-    // Count the attempt before checking it, per network and across everyone.
+    // Per network: count the attempt *before* checking it, atomically, so parallel guesses can't slip through.
     const netKey = `net-${hex(await sha256(networkOf(ip))).slice(0, 32)}`;
-    const [mine, everyone] = await Promise.all([
-      countAttempt(stores.limits, netKey, now, FAIL_WINDOW),
-      countAttempt(stores.limits, "all", now, GLOBAL_WINDOW),
-    ]);
-    if (mine > MAX_FAILS) return fail("Too many tries. Wait 15 minutes and try again.", 429);
-    if (everyone > GLOBAL_MAX) return fail("Too many sign-in attempts in the last hour. Devices already signed in keep working; try again later.", 429);
+    if ((await countAttempt(stores.limits, netKey, now, FAIL_WINDOW)) > MAX_FAILS) {
+      return fail("Too many tries. Wait 15 minutes and try again.", 429);
+    }
+    // Library-wide: only wrong passphrases count, so traffic that's already blocked can't use it up.
+    const all = await stores.limits.get("wrong-all", { type: "json" });
+    if (all && now - all.since <= GLOBAL_WINDOW && all.n >= GLOBAL_MAX) {
+      return fail("Too many wrong passphrases in the last hour. Devices already signed in keep working; try again later.", 429);
+    }
     let given = "";
     try { given = String((await req.json()).passphrase || ""); } catch {}
     if (!given || given.length > 500 || !(await samePassphrase(given, passphrase))) {
+      await countAttempt(stores.limits, "wrong-all", now, GLOBAL_WINDOW); // contention here only under-counts, never locks
       await new Promise((r) => setTimeout(r, deps.wrongDelay ?? WRONG_DELAY));
       return fail("That passphrase isn't right.", 401);
     }
