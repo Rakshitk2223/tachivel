@@ -113,6 +113,21 @@ dialog::backdrop { background: rgb(0 0 0 / .55); }
 .results .rs { font-family: var(--font-read); font-size: var(--text-md); line-height: 1.5; }
 .results mark { background: none; color: var(--word); text-decoration: underline 2px var(--accent); text-underline-offset: 3px; }
 
+.side-foot { display: flex; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+#syncBtn.bad { color: var(--danger); }
+.sync { padding: var(--space-5); gap: var(--space-3); line-height: 1.5; }
+.sync h2 { font: var(--weight-medium) var(--text-xl) var(--font-read); margin: 0; }
+.sync p { margin: 0; }
+.sync .muted { color: var(--text-muted); font-size: 13px; }
+.sync #syncOffPane, .sync #syncOnPane { display: flex; flex-direction: column; gap: var(--space-3); align-items: flex-start; }
+.sync .join { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; }
+.sync .row { display: flex; gap: var(--space-2); align-items: center; width: 100%; flex-wrap: wrap; }
+.sync input { flex: 1; min-width: 0; font: var(--text-md) var(--font-mono); text-transform: uppercase; padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); }
+.sync input:focus { border-color: var(--accent); outline: none; }
+.code { font: var(--weight-medium) var(--text-lg) var(--font-mono); letter-spacing: .05em; user-select: all; padding: var(--space-2) var(--space-3); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.sync .error { color: var(--danger); font-size: 13px; }
+.sync .error:empty { display: none; }
+.toast { position: fixed; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-full); padding: var(--space-2) var(--space-4); box-shadow: var(--elev-2); z-index: 30; max-width: calc(100% - 32px); font-size: 13px; }
 .loading { position: fixed; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 85%, transparent); z-index: 20; }
 .loading-box { width: min(360px, calc(100% - 32px)); font-family: var(--font-read); font-size: var(--text-lg); text-align: center; }
 

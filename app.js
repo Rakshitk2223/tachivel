@@ -429,21 +429,21 @@ function markWord(charIndex) {
 }
 
 // ---------- Navigation ----------
-function openChapter(ch, s = 0, { speak = true } = {}) {
+function openChapter(ch, s = 0, { speak = true, touch = true } = {}) {
   if (!book) return;
   ch = Math.max(0, Math.min(book.chapters.length - 1, ch));
   const changed = ch !== state.ch || !sentEls.length;
   state.ch = ch;
   if (changed) { litIndex = -1; renderChapter(); $("main").scrollTo({ top: 0, behavior: "instant" }); }
-  goSentence(s, { speak });
+  goSentence(s, { speak, touch });
 }
-function goSentence(i, { speak = true } = {}) {
+function goSentence(i, { speak = true, touch = true } = {}) {
   state.s = Math.max(0, Math.min(sentEls.length - 1, i));
   // Remember the place by chapter title and sentence text, not just numbers, so it survives a re-built EPUB.
   state.chKey = book.chapters[state.ch].t;
   state.sText = book.chapters[state.ch].s[state.s];
   highlight();
-  saveState();
+  if (touch) changed(); else saveState();
   if (playing && speak) speakCurrent();
 }
 function advance() {
@@ -531,6 +531,7 @@ function pause() {
   setPlayIcon(ICON_PLAY);
   $("playBtn").setAttribute("aria-label", "Play");
   highlight(false); // clears the word marker
+  schedulePush(true); // so another device can pick up right away
 }
 const toggle = () => (playing ? pause() : play());
 
@@ -671,12 +672,18 @@ function showBook(b) {
   showTab("chapters");
   sentEls = [];
   state.ch = -1; // force render
-  openChapter(place.ch, place.s, { speak: false });
+  openChapter(place.ch, place.s, { speak: false, touch: false });
 }
-// Find the saved place in this copy of the book: chapter by title, then sentence by its text (nearest match).
+// Find the saved place in this copy of the book, which may be a newer build with renamed or moved chapters:
+// exact chapter title → the exact sentence anywhere in the book → same chapter number → same position.
 function findPlace(b) {
   let ch = b.chapters.findIndex((c) => c.t === state.chKey);
-  if (ch < 0) ch = Math.min(state.ch, b.chapters.length - 1);
+  if (ch < 0 && state.sText && state.sText.length > 25) ch = b.chapters.findIndex((c) => c.s.includes(state.sText));
+  if (ch < 0) {
+    const n = /^(?:chapter|ch\.?)\s*(\d+)\b/i.exec(state.chKey || "")?.[1];
+    if (n) ch = b.chapters.findIndex((c) => new RegExp(`^(?:chapter|ch\\.?)\\s*${n}\\b`, "i").test(c.t));
+  }
+  if (ch < 0) ch = Math.max(0, Math.min(state.ch, b.chapters.length - 1));
   const ss = b.chapters[ch].s;
   let s = Math.min(state.s, ss.length - 1);
   if (state.sText && ss[s] !== state.sText) {
@@ -685,6 +692,125 @@ function findPlace(b) {
     if (best >= 0) s = best;
   }
   return { ch, s: Math.max(0, s) };
+}
+
+// ---------- Sync (bookmark only: the book itself never leaves this device) ----------
+const SYNC_URL = "/api/sync";
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no O/0, I/1
+const CODE_RE = /^[A-HJ-NP-Z2-9]{4}(-[A-HJ-NP-Z2-9]{4}){3}$/;
+let pushTimer = null, lastPush = 0, syncStatus = "";
+
+// Something you did (moved, changed a setting): it becomes the newest bookmark.
+function changed() {
+  state.at = Date.now();
+  saveState();
+  schedulePush();
+}
+function bookmark() {
+  return {
+    at: state.at, book: book?.title || (state.bookId || "").split("|")[0],
+    chKey: state.chKey, sText: state.sText, ch: Math.max(0, state.ch), s: state.s,
+    rate: state.rate, voice: state.voice, theme: state.theme, size: state.size,
+  };
+}
+async function syncFetch(method, body) {
+  const res = await fetch(SYNC_URL, {
+    method,
+    headers: { "x-sync-code": state.syncCode, "content-type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+    keepalive: method === "PUT",
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Sync failed (${res.status})`);
+  return res.json();
+}
+// While reading, send at most every 15 s; on pause or leaving, send now.
+function schedulePush(now = false) {
+  if (!state.syncCode || !state.at || !bookmark().book) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(push, now ? 0 : Math.max(0, 15000 - (Date.now() - lastPush)));
+}
+async function push() {
+  lastPush = Date.now();
+  try { await syncFetch("PUT", bookmark()); setSyncStatus("ok"); }
+  catch { setSyncStatus("error"); }
+}
+async function pull() {
+  if (!state.syncCode || playing) return;
+  try {
+    const remote = await syncFetch("GET");
+    setSyncStatus("ok");
+    if (remote && remote.at > (state.at || 0)) applyRemote(remote);
+  } catch { setSyncStatus("error"); }
+}
+function applyRemote(r) {
+  state.at = r.at;
+  state.chKey = r.chKey; state.sText = r.sText;
+  if (r.ch != null) state.ch = r.ch;
+  if (r.s != null) state.s = r.s;
+  if (r.rate) state.rate = r.rate;
+  if (r.theme) state.theme = r.theme;
+  if (r.size) state.size = r.size;
+  if (r.voice && voices.some((v) => v.voiceURI === r.voice)) { state.voice = r.voice; $("voice").value = r.voice; }
+  applySettings();
+  if (!book || book.title !== r.book) {
+    // Not this book here (yet): remember the place so importing it lands there.
+    state.bookId = `${r.book}|`;
+    saveState();
+    if (!book) $("emptyMsg").textContent = `Your other device is at ${r.chKey || "a chapter"} of ${r.book}. Add the book here to continue from there.`;
+    return;
+  }
+  saveState();
+  const place = findPlace(book);
+  state.ch = -1;
+  openChapter(place.ch, place.s, { speak: false, touch: false });
+  toast(`Picked up from your other device: ${book.chapters[place.ch].t}`);
+}
+function setSyncStatus(s) { syncStatus = s; renderSync(); }
+function renderSync() {
+  const on = !!state.syncCode;
+  $("syncBtn").textContent = !on ? "Sync: off" : syncStatus === "error" ? "Sync: can't reach server" : "Sync: on";
+  $("syncBtn").classList.toggle("bad", on && syncStatus === "error");
+  $("syncOffPane").hidden = on;
+  $("syncOnPane").hidden = !on;
+  $("syncCode").textContent = state.syncCode || "";
+}
+function openSyncDialog() { renderSync(); $("syncError").textContent = ""; $("syncDlg").showModal(); }
+function newCode() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  const chars = [...bytes].map((b) => CODE_ALPHABET[b % 32]).join("");
+  return chars.match(/.{4}/g).join("-");
+}
+async function createSyncCode() {
+  state.syncCode = newCode();
+  if (!state.at) state.at = Date.now();
+  saveState();
+  renderSync();
+  await push();
+}
+async function joinSync(input) {
+  const code = input.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/(.{4})(?=.)/g, "$1-");
+  if (!CODE_RE.test(code)) { $("syncError").textContent = "That doesn't look like a sync code. It's 16 letters and digits, like ABCD-EFGH-JKLM-NP23."; return; }
+  state.syncCode = code;
+  state.at = 0; // whatever the other device has is newer than a device that just joined
+  saveState();
+  renderSync();
+  await pull();
+  if (syncStatus === "error") $("syncError").textContent = "Couldn't reach the sync server. Check your connection and try again.";
+  else $("syncDlg").close();
+}
+async function copySyncCode() {
+  try { await navigator.clipboard.writeText(state.syncCode); $("syncCopy").textContent = "Copied"; }
+  catch { getSelection().selectAllChildren($("syncCode")); }
+  setTimeout(() => ($("syncCopy").textContent = "Copy"), 1500);
+}
+let toastTimer;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.hidden = true), 4000);
 }
 
 // ---------- Wiring ----------
@@ -700,22 +826,22 @@ function wire() {
     const s = e.target.closest(".s");
     if (s) goSentence(+s.dataset.i);
   };
-  $("voice").onchange = (e) => { state.voice = e.target.value; saveState(); if (playing) speakCurrent(); };
-  $("rate").oninput = (e) => { state.rate = +e.target.value; applySettings(); saveState(); };
+  $("voice").onchange = (e) => { state.voice = e.target.value; changed(); if (playing) speakCurrent(); };
+  $("rate").oninput = (e) => { state.rate = +e.target.value; applySettings(); changed(); };
   const nudgeRate = (d) => {
     state.rate = Math.round(Math.min(2.5, Math.max(0.6, state.rate + d)) * 20) / 20;
-    applySettings(); saveState();
+    applySettings(); changed();
     if (playing) speakCurrent();
   };
   $("rateDown").onclick = () => nudgeRate(-0.05);
   $("rateUp").onclick = () => nudgeRate(0.05);
   $("rate").onchange = () => { if (playing) speakCurrent(); };
-  $("sizeDown").onclick = () => { state.size = Math.max(14, state.size - 1); applySettings(); saveState(); };
-  $("sizeUp").onclick = () => { state.size = Math.min(32, state.size + 1); applySettings(); saveState(); };
+  $("sizeDown").onclick = () => { state.size = Math.max(14, state.size - 1); applySettings(); changed(); };
+  $("sizeUp").onclick = () => { state.size = Math.min(32, state.size + 1); applySettings(); changed(); };
   $("themeBtn").onclick = () => {
     const i = THEMES.findIndex((t) => t[0] === state.theme);
     state.theme = THEMES[(i + 1) % THEMES.length][0];
-    applySettings(); saveState();
+    applySettings(); changed();
   };
 
   $("goto").oninput = filterChapters;
@@ -758,6 +884,18 @@ function wire() {
     else if (k === "]" || k === "=" || k === "+") { e.preventDefault(); $("rateUp").click(); }
   });
 
+  $("syncBtn").onclick = openSyncDialog;
+  $("syncCreate").onclick = createSyncCode;
+  $("syncJoinForm").onsubmit = (e) => { e.preventDefault(); joinSync($("syncInput").value); };
+  $("syncCopy").onclick = copySyncCode;
+  $("syncOff").onclick = () => { state.syncCode = null; saveState(); renderSync(); };
+  // Check for a newer place from another device whenever Tachivel comes back to the front.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") pull();
+    else schedulePush(true);
+  });
+  addEventListener("focus", () => pull());
+
   // Chrome stops speech silently in background tabs after ~15s of one utterance; per-sentence queueing avoids most of it.
   addEventListener("pagehide", () => speechSynthesis.cancel());
 }
@@ -774,5 +912,7 @@ async function boot() {
     if (saved?.v === BOOK_VERSION) showBook(saved);
     else if (saved) $("emptyMsg").textContent = "Tachivel was updated to show pictures and arcs. Drop the book in once more; your place is kept.";
   } catch {}
+  renderSync();
+  pull();
 }
 boot();

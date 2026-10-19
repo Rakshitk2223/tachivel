@@ -34,6 +34,7 @@
     <div class="gallery" id="gallery" hidden></div>
     <div class="side-foot">
       <button class="link" id="openBtn" type="button">Open another book</button>
+      <button class="link" id="syncBtn" type="button">Sync: off</button>
       <input id="file" type="file" accept=".epub,application/epub+zip" hidden>
     </div>
   </aside>
@@ -87,6 +88,31 @@
   <div class="search-count" id="qCount"></div>
   <ul class="results" id="results"></ul>
 </dialog>
+
+<dialog id="syncDlg" class="sync" aria-labelledby="syncTitle">
+  <h2 id="syncTitle">Sync your place</h2>
+  <p class="muted">Keeps your Mac and iPhone on the same sentence. Only a bookmark is stored: the book's title, the chapter, the sentence you're on, your voice and speed. The book itself never leaves this device; add it on each device once.</p>
+  <div id="syncOffPane">
+    <button class="btn" id="syncCreate" type="button">Create a sync code</button>
+    <form id="syncJoinForm" class="join">
+      <label for="syncInput">Already have a code from your other device?</label>
+      <div class="row">
+        <input id="syncInput" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH-JKLM-NP23">
+        <button class="chip" type="submit">Join</button>
+      </div>
+    </form>
+  </div>
+  <div id="syncOnPane" hidden>
+    <p>Your sync code. Enter it on your other device:</p>
+    <div class="row"><code id="syncCode" class="code"></code><button class="chip" id="syncCopy" type="button">Copy</button></div>
+    <p class="muted">Anyone with this code can see and move your bookmark, so keep it to yourself.</p>
+    <button class="link" id="syncOff" type="button">Turn off sync on this device</button>
+  </div>
+  <p class="error" id="syncError" role="alert"></p>
+  <form method="dialog"><button class="link" type="submit">Close</button></form>
+</dialog>
+
+<div class="toast" id="toast" role="status" hidden></div>
 
 <div class="loading" id="loading" hidden>
   <div class="loading-box">
