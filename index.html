@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en" data-theme="ember">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tachivel</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2317110f'/%3E%3Cpath d='M8 21h16' stroke='%23e2704a' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M8 13h16' stroke='%23f1e2d2' stroke-opacity='.4' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Figtree:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles/tokens.css">
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="side" id="side" aria-label="Chapters">
+    <div class="book">
+      <div class="book-title" id="bookTitle">No book open</div>
+      <div class="book-author" id="bookAuthor"></div>
+      <div class="prog" aria-hidden="true"><i id="progBar"></i></div>
+      <div class="meta" id="bookMeta"></div>
+    </div>
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" id="tabCh" aria-selected="true">Chapters</button>
+      <button type="button" role="tab" id="tabImg" aria-selected="false" hidden>Images <span class="count" id="imgCount"></span></button>
+    </div>
+    <div class="pane" id="chPane">
+      <label class="goto">
+        <span class="sr">Go to chapter</span>
+        <input id="goto" type="text" inputmode="search" autocomplete="off" placeholder="Chapter number or title" disabled>
+        <kbd>G</kbd>
+      </label>
+      <ul class="ch" id="chapters"></ul>
+    </div>
+    <div class="gallery" id="gallery" hidden></div>
+    <div class="side-foot">
+      <button class="link" id="openBtn" type="button">Open another book</button>
+      <input id="file" type="file" accept=".epub,application/epub+zip" hidden>
+    </div>
+  </aside>
+
+  <main class="main" id="main">
+    <div class="empty" id="empty">
+      <div class="drop" id="drop">
+        <h1>Drop an EPUB here</h1>
+        <p id="emptyMsg">It's read on this Mac and never uploaded anywhere.</p>
+        <button class="btn" id="pickBtn" type="button">Choose a file</button>
+      </div>
+    </div>
+    <article class="text" id="text" hidden></article>
+  </main>
+
+  <footer class="bar" id="bar">
+    <button class="ib menu" id="menuBtn" type="button" aria-label="Chapter list (C)" title="Chapter list (C)">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+    </button>
+    <div class="btns">
+      <button class="ib" id="prevCh" type="button" aria-label="Previous chapter" title="Previous chapter (Shift+↑)"><svg viewBox="0 0 24 24"><path d="M12 6l-7 7h14zM5 16h14v2H5z"/></svg></button>
+      <button class="ib" id="prevS" type="button" aria-label="Previous sentence" title="Previous sentence (←)"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zM9.5 12 18 18V6z"/></svg></button>
+      <button class="ib play" id="playBtn" type="button" aria-label="Play" title="Play / pause (Space)"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
+      <button class="ib" id="nextS" type="button" aria-label="Next sentence" title="Next sentence (→)"><svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg></button>
+      <button class="ib" id="nextCh" type="button" aria-label="Next chapter" title="Next chapter (Shift+↓)"><svg viewBox="0 0 24 24"><path d="M12 18l7-7H5zM5 6h14v2H5z"/></svg></button>
+    </div>
+    <span class="pos" id="pos"></span>
+    <div class="ctl">
+      <button class="chip" id="searchBtn" type="button" title="Search the book (/)">Search <kbd>/</kbd></button>
+      <label class="chip"><span class="sr">Voice</span><select id="voice"></select></label>
+      <div class="chip speed">
+        <button type="button" id="rateDown" aria-label="Slower" title="Slower ( [ or − )">−</button>
+        <label><span class="sr">Speed</span><input id="rate" type="range" min="0.6" max="2.5" step="0.05" value="1"></label>
+        <output id="rateOut">1.00×</output>
+        <button type="button" id="rateUp" aria-label="Faster" title="Faster ( ] or + )">+</button>
+      </div>
+      <div class="chip size">
+        <button type="button" id="sizeDown" aria-label="Smaller text">A−</button>
+        <button type="button" id="sizeUp" aria-label="Larger text">A+</button>
+      </div>
+      <button class="chip" id="themeBtn" type="button" title="Theme">Ember</button>
+    </div>
+  </footer>
+</div>
+
+<dialog id="search" aria-label="Search the book">
+  <form method="dialog" class="search-head">
+    <input id="q" type="search" placeholder="Search every chapter…" autocomplete="off">
+    <button class="link" value="close" type="submit">Close</button>
+  </form>
+  <div class="search-count" id="qCount"></div>
+  <ul class="results" id="results"></ul>
+</dialog>
+
+<div class="loading" id="loading" hidden>
+  <div class="loading-box">
+    <div id="loadingText">Reading the book…</div>
+    <div class="prog"><i id="loadingBar"></i></div>
+  </div>
+</div>
+
+<script src="vendor/jszip.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
