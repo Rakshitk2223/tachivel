@@ -41,12 +41,12 @@ export function networkOf(ip) {
   return full.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":") + "::/64";
 }
 
-// Add one attempt to a counter with a conflict-checked write, so parallel requests can't all read "0".
-async function countAttempt(limits, key, now, windowMs) {
+// Add (or with delta -1, give back) one attempt with a conflict-checked write, so parallel requests can't all read "0".
+async function countAttempt(limits, key, now, windowMs, delta = 1) {
   for (let tries = 0; tries < 6; tries++) {
     const cur = await limits.getWithMetadata(key, { type: "json" });
     const rec = cur?.data && now - cur.data.since <= windowMs ? cur.data : { n: 0, since: now };
-    const next = { n: rec.n + 1, since: rec.since };
+    const next = { n: Math.max(0, rec.n + delta), since: rec.since };
     const res = cur ? await limits.setJSON(key, next, { onlyIfMatch: cur.etag }) : await limits.setJSON(key, next, { onlyIfNew: true });
     if (res?.modified !== false) return next.n;
   }
@@ -114,19 +114,19 @@ export async function handle(req, deps) {
     if ((await countAttempt(stores.limits, netKey, now, FAIL_WINDOW)) > MAX_FAILS) {
       return fail("Too many tries. Wait 15 minutes and try again.", 429);
     }
-    // Library-wide: only wrong passphrases count, so traffic that's already blocked can't use it up.
-    const all = await stores.limits.get("wrong-all", { type: "json" });
-    if (all && now - all.since <= GLOBAL_WINDOW && all.n >= GLOBAL_MAX) {
-      return fail("Too many wrong passphrases in the last hour. Devices already signed in keep working; try again later.", 429);
+    // Library-wide: reserve a slot atomically before checking (traffic already blocked above never gets here).
+    // Fails closed: heavy write contention counts as over the limit. A correct passphrase gives its slot back.
+    if ((await countAttempt(stores.limits, "attempts-all", now, GLOBAL_WINDOW)) > GLOBAL_MAX) {
+      return fail("Too many sign-in attempts in the last hour. Devices already signed in keep working; try again later.", 429);
     }
     let given = "";
     try { given = String((await req.json()).passphrase || ""); } catch {}
     if (!given || given.length > 500 || !(await samePassphrase(given, passphrase))) {
-      await countAttempt(stores.limits, "wrong-all", now, GLOBAL_WINDOW); // contention here only under-counts, never locks
       await new Promise((r) => setTimeout(r, deps.wrongDelay ?? WRONG_DELAY));
       return fail("That passphrase isn't right.", 401);
     }
     await stores.limits.delete(netKey);
+    await countAttempt(stores.limits, "attempts-all", now, GLOBAL_WINDOW, -1); // your own sign-ins don't use up the limit
     return json({ in: true }, 200, { "set-cookie": cookie(await makeSession(stores.secrets, passphrase, now), SESSION_DAYS * 86400) });
   }
   if (path === "/api/logout" && method === "POST") {
