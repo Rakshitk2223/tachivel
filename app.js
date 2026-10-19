@@ -155,7 +155,7 @@ async function parseEpub(file, onProgress) {
   const opfPath = parseXml(container).getElementsByTagNameNS("*", "rootfile")[0]?.getAttribute("full-path");
   const opf = parseXml(await read(opfPath));
   const base = dirOf(opfPath);
-  const title = clean(byTag(opf, "title")[0]?.textContent || file.name.replace(/\.epub$/i, ""));
+  const title = clean(byTag(opf, "title")[0]?.textContent || (file.name || "Untitled book").replace(/\.epub$/i, ""));
   const author = clean(byTag(opf, "creator")[0]?.textContent || "");
 
   const items = {};
@@ -631,29 +631,41 @@ function toggleChapters() {
 }
 
 // ---------- Import ----------
+function showLoading(text) {
+  $("loading").hidden = false;
+  $("loadingText").textContent = text;
+  $("loadingBar").style.width = "0%";
+}
+const hideLoading = () => ($("loading").hidden = true);
+// Parse an EPUB (a dropped file or a download from your library), save it on this device and show it.
+async function openBook(file, { cloud: cloudId = null } = {}) {
+  const parsed = await parseEpub(file, (i, n) => {
+    $("loadingText").textContent = `Reading the book… ${i} / ${n}`;
+    $("loadingBar").style.width = `${(i / n) * 100}%`;
+  });
+  parsed.cloud = cloudId;
+  await dbPut("current", parsed);
+  // Same book (by title) = a newer build: keep the place. A different book starts at the beginning.
+  const same = (state.bookId || "").split("|")[0] === parsed.title;
+  state.bookId = parsed.id;
+  if (!same) { state.ch = 0; state.s = 0; state.chKey = null; state.sText = null; }
+  saveState();
+  showBook(parsed);
+}
 async function importFile(file) {
   if (!file) return;
   pause();
-  $("loading").hidden = false;
-  $("loadingText").textContent = "Reading the book…";
+  showLoading("Reading the book…");
   try {
-    const parsed = await parseEpub(file, (i, n) => {
-      $("loadingText").textContent = `Reading the book… ${i} / ${n}`;
-      $("loadingBar").style.width = `${(i / n) * 100}%`;
-    });
-    await dbPut("current", parsed);
-    // Same book (by title) = a newer weekly build: keep the place. A different book starts at the beginning.
-    const same = (state.bookId || "").split("|")[0] === parsed.title;
-    state.bookId = parsed.id;
-    if (!same) { state.ch = 0; state.s = 0; state.chKey = null; state.sText = null; }
-    saveState();
-    showBook(parsed);
+    await openBook(file);
   } catch (err) {
     $("loadingText").textContent = err.message || String(err);
     await new Promise((r) => setTimeout(r, 3500));
+    return;
   } finally {
-    $("loading").hidden = true;
+    hideLoading();
   }
+  if (cloud === "in") uploadBook(file);
 }
 function showBook(b) {
   book = b;
@@ -694,12 +706,79 @@ function findPlace(b) {
   return { ch, s: Math.max(0, s) };
 }
 
-// ---------- Sync (bookmark only: the book itself never leaves this device) ----------
-const SYNC_URL = "/api/sync";
-const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no O/0, I/1
-const CODE_RE = /^[A-HJ-NP-Z2-9]{4}(-[A-HJ-NP-Z2-9]{4}){3}$/;
-let pushTimer = null, lastPush = 0, syncStatus = "";
+// ---------- Cloud library: sign in once, and the book and your place follow you ----------
+// cloud: "off" = no server (local copy) · "out" = signed out · "in" = signed in · "error" = server unreachable
+const PART = 4 * 1024 * 1024; // upload size per request (a Netlify Function body caps at 6 MB)
+let cloud = "off", pushTimer = null, lastPush = 0, syncing = false;
 
+async function apiJSON(method, path, body) {
+  const res = await fetch(path, {
+    method, cache: "no-store", credentials: "same-origin",
+    headers: body ? { "content-type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+    keepalive: method === "PUT" && path === "/api/bookmark",
+  });
+  if (res.status === 401 && path !== "/api/login") setCloud("out");
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `The server said no (${res.status}).`);
+  return res.json();
+}
+async function apiBinary(method, path, body) {
+  const res = await fetch(path, { method, credentials: "same-origin", body, headers: body ? { "content-type": "application/octet-stream" } : {} });
+  if (res.status === 401) setCloud("out");
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `The server said no (${res.status}).`);
+  return method === "GET" ? res.arrayBuffer() : res.json();
+}
+
+async function checkCloud() {
+  try {
+    const res = await fetch("/api/me", { cache: "no-store", credentials: "same-origin" });
+    setCloud(res.status === 200 ? "in" : res.status === 401 ? "out" : "off"); // 404 = local copy without the server
+  } catch { setCloud("off"); }
+  if (cloud === "in") syncNow();
+}
+// On opening, and whenever Tachivel comes back to the front: newer book first, then the newest place.
+async function syncNow() {
+  if (cloud !== "in" || syncing || playing) return;
+  syncing = true;
+  try { await fetchNewerBook(); await pull(); }
+  catch { if (cloud === "in") setCloud("error"); }
+  finally { syncing = false; }
+}
+async function fetchNewerBook() {
+  const m = await apiJSON("GET", "/api/book");
+  if (!m || m.upload === book?.cloud) return;
+  const isUpdate = !!book;
+  showLoading(isUpdate ? "Getting the newest chapters…" : "Getting your book…");
+  try {
+    const parts = [];
+    for (let i = 0; i < m.parts; i++) {
+      parts.push(await apiBinary("GET", `/api/book/parts/${m.upload}/${i}`));
+      $("loadingBar").style.width = `${((i + 1) / m.parts) * 60}%`;
+    }
+    const before = book?.chapters.length || 0;
+    await openBook(new Blob(parts, { type: "application/epub+zip" }), { cloud: m.upload, name: m.name });
+    const added = book.chapters.length - before;
+    if (isUpdate) toast(added > 0 ? `New build loaded: ${added} new section${added === 1 ? "" : "s"}.` : "New build of the book loaded.");
+  } finally { hideLoading(); }
+}
+async function uploadBook(file) {
+  const upload = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const parts = Math.ceil(file.size / PART);
+  try {
+    for (let i = 0; i < parts; i++) {
+      toast(`Saving to your library… ${i + 1} of ${parts}`, 60000);
+      await apiBinary("PUT", `/api/book/parts/${upload}/${i}`, file.slice(i * PART, (i + 1) * PART));
+    }
+    await apiJSON("PUT", "/api/book", { upload, parts, size: file.size, name: file.name, title: book.title });
+    book.cloud = upload;
+    await dbPut("current", book);
+    toast("Saved to your library. Your other devices get it next time they open Tachivel.");
+  } catch (err) {
+    toast(`Couldn't save the book to your library: ${err.message}`);
+  }
+}
+
+// ---------- Bookmark sync ----------
 // Something you did (moved, changed a setting): it becomes the newest bookmark.
 function changed() {
   state.at = Date.now();
@@ -713,35 +792,22 @@ function bookmark() {
     rate: state.rate, voice: state.voice, theme: state.theme, size: state.size,
   };
 }
-async function syncFetch(method, body) {
-  const res = await fetch(SYNC_URL, {
-    method,
-    headers: { "x-sync-code": state.syncCode, "content-type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-    keepalive: method === "PUT",
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Sync failed (${res.status})`);
-  return res.json();
-}
 // While reading, send at most every 15 s; on pause or leaving, send now.
 function schedulePush(now = false) {
-  if (!state.syncCode || !state.at || !bookmark().book) return;
+  if (cloud !== "in" || !state.at || !bookmark().book) return;
   clearTimeout(pushTimer);
   pushTimer = setTimeout(push, now ? 0 : Math.max(0, 15000 - (Date.now() - lastPush)));
 }
 async function push() {
   lastPush = Date.now();
-  try { await syncFetch("PUT", bookmark()); setSyncStatus("ok"); }
-  catch { setSyncStatus("error"); }
+  try { await apiJSON("PUT", "/api/bookmark", bookmark()); if (cloud === "error") setCloud("in"); }
+  catch { if (cloud === "in") setCloud("error"); }
 }
 async function pull() {
-  if (!state.syncCode || playing) return;
-  try {
-    const remote = await syncFetch("GET");
-    setSyncStatus("ok");
-    if (remote && remote.at > (state.at || 0)) applyRemote(remote);
-  } catch { setSyncStatus("error"); }
+  if (cloud !== "in" || playing) return;
+  const remote = await apiJSON("GET", "/api/bookmark");
+  if (remote && remote.at > (state.at || 0)) applyRemote(remote);
+  else if (state.at && (!remote || state.at > remote.at)) schedulePush(true); // this device is ahead
 }
 function applyRemote(r) {
   state.at = r.at;
@@ -753,64 +819,64 @@ function applyRemote(r) {
   if (r.size) state.size = r.size;
   if (r.voice && voices.some((v) => v.voiceURI === r.voice)) { state.voice = r.voice; $("voice").value = r.voice; }
   applySettings();
-  if (!book || book.title !== r.book) {
-    // Not this book here (yet): remember the place so importing it lands there.
-    state.bookId = `${r.book}|`;
-    saveState();
-    if (!book) $("emptyMsg").textContent = `Your other device is at ${r.chKey || "a chapter"} of ${r.book}. Add the book here to continue from there.`;
-    return;
-  }
+  if (!book || book.title !== r.book) { state.bookId = `${r.book}|`; saveState(); return; }
   saveState();
   const place = findPlace(book);
   state.ch = -1;
   openChapter(place.ch, place.s, { speak: false, touch: false });
   toast(`Picked up from your other device: ${book.chapters[place.ch].t}`);
 }
-function setSyncStatus(s) { syncStatus = s; renderSync(); }
-function renderSync() {
-  const on = !!state.syncCode;
-  $("syncBtn").textContent = !on ? "Sync: off" : syncStatus === "error" ? "Sync: can't reach server" : "Sync: on";
-  $("syncBtn").classList.toggle("bad", on && syncStatus === "error");
-  $("syncOffPane").hidden = on;
-  $("syncOnPane").hidden = !on;
-  $("syncCode").textContent = state.syncCode || "";
+
+// ---------- Sign-in UI ----------
+function setCloud(c) {
+  cloud = c;
+  const btn = $("accountBtn");
+  btn.hidden = c === "off";
+  btn.textContent = c === "in" ? "Library: synced" : c === "error" ? "Library: can't reach server" : "Sign in";
+  btn.classList.toggle("bad", c === "error");
+  // Signed out with no book here (a new phone or iPad): signing in is the main action.
+  const signInFirst = c === "out";
+  $("emptySignIn").hidden = !signInFirst;
+  $("pickBtn").className = signInFirst ? "link" : "btn";
+  $("pickBtn").textContent = signInFirst ? "Or open an EPUB from this device" : "Choose a file";
+  if (!$("emptyMsg").dataset.custom) {
+    $("emptyTitle").textContent = signInFirst ? "Your library" : "Drop an EPUB here";
+    $("emptyMsg").textContent = signInFirst ? "Sign in to get your book and pick up where you left off."
+      : c === "in" ? "Your library is empty. Drop the EPUB here once, or run tachivel push on your Mac."
+      : "It's read on this device and stays on it.";
+  }
+  $("signedOutPane").hidden = c === "in" || c === "error";
+  $("signedInPane").hidden = !(c === "in" || c === "error");
 }
-function openSyncDialog() { renderSync(); $("syncError").textContent = ""; $("syncDlg").showModal(); }
-function newCode() {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  const chars = [...bytes].map((b) => CODE_ALPHABET[b % 32]).join("");
-  return chars.match(/.{4}/g).join("-");
+function openAccount() { $("loginError").textContent = ""; $("accountDlg").showModal(); if (cloud === "out") $("passphrase").focus(); }
+async function signIn(e) {
+  e.preventDefault();
+  const pass = $("passphrase").value;
+  if (!pass) return;
+  $("loginError").textContent = "";
+  $("loginBtn").disabled = true;
+  try {
+    await apiJSON("POST", "/api/login", { passphrase: pass });
+    $("passphrase").value = "";
+    setCloud("in");
+    $("accountDlg").close();
+    await syncNow();
+  } catch (err) {
+    $("loginError").textContent = err.message;
+  } finally { $("loginBtn").disabled = false; }
 }
-async function createSyncCode() {
-  state.syncCode = newCode();
-  if (!state.at) state.at = Date.now();
-  saveState();
-  renderSync();
-  await push();
-}
-async function joinSync(input) {
-  const code = input.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/(.{4})(?=.)/g, "$1-");
-  if (!CODE_RE.test(code)) { $("syncError").textContent = "That doesn't look like a sync code. It's 16 letters and digits, like ABCD-EFGH-JKLM-NP23."; return; }
-  state.syncCode = code;
-  state.at = 0; // whatever the other device has is newer than a device that just joined
-  saveState();
-  renderSync();
-  await pull();
-  if (syncStatus === "error") $("syncError").textContent = "Couldn't reach the sync server. Check your connection and try again.";
-  else $("syncDlg").close();
-}
-async function copySyncCode() {
-  try { await navigator.clipboard.writeText(state.syncCode); $("syncCopy").textContent = "Copied"; }
-  catch { getSelection().selectAllChildren($("syncCode")); }
-  setTimeout(() => ($("syncCopy").textContent = "Copy"), 1500);
+async function signOut() {
+  try { await apiJSON("POST", "/api/logout"); } catch {}
+  setCloud("out");
+  $("accountDlg").close();
 }
 let toastTimer;
-function toast(msg) {
+function toast(msg, ms = 4000) {
   const t = $("toast");
   t.textContent = msg;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), 4000);
+  toastTimer = setTimeout(() => (t.hidden = true), ms);
 }
 
 // ---------- Wiring ----------
@@ -884,17 +950,16 @@ function wire() {
     else if (k === "]" || k === "=" || k === "+") { e.preventDefault(); $("rateUp").click(); }
   });
 
-  $("syncBtn").onclick = openSyncDialog;
-  $("syncCreate").onclick = createSyncCode;
-  $("syncJoinForm").onsubmit = (e) => { e.preventDefault(); joinSync($("syncInput").value); };
-  $("syncCopy").onclick = copySyncCode;
-  $("syncOff").onclick = () => { state.syncCode = null; saveState(); renderSync(); };
-  // Check for a newer place from another device whenever Tachivel comes back to the front.
+  $("accountBtn").onclick = openAccount;
+  $("emptySignIn").onclick = openAccount;
+  $("loginForm").onsubmit = signIn;
+  $("signOutBtn").onclick = signOut;
+  // Check for a newer book and place whenever Tachivel comes back to the front.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") pull();
+    if (document.visibilityState === "visible") syncNow();
     else schedulePush(true);
   });
-  addEventListener("focus", () => pull());
+  addEventListener("focus", () => syncNow());
 
   // Chrome stops speech silently in background tabs after ~15s of one utterance; per-sentence queueing avoids most of it.
   addEventListener("pagehide", () => speechSynthesis.cancel());
@@ -910,9 +975,8 @@ async function boot() {
   try {
     const saved = await dbGet("current");
     if (saved?.v === BOOK_VERSION) showBook(saved);
-    else if (saved) $("emptyMsg").textContent = "Tachivel was updated to show pictures and arcs. Drop the book in once more; your place is kept.";
+    else if (saved) $("emptyMsg").dataset.custom = "1", $("emptyMsg").textContent = "Tachivel was updated to show pictures and arcs. Drop the book in once more; your place is kept.";
   } catch {}
-  renderSync();
-  pull();
+  checkCloud();
 }
 boot();
