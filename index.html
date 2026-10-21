@@ -2,7 +2,7 @@
 <html lang="en" data-theme="ember">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tachivel</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2317110f'/%3E%3Cpath d='M8 21h16' stroke='%23e2704a' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M8 13h16' stroke='%23f1e2d2' stroke-opacity='.4' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -11,13 +11,39 @@
 <link rel="stylesheet" href="styles/app.css">
 </head>
 <body>
-<div class="app" id="app">
-  <aside class="side" id="side" aria-label="Chapters">
+<div class="app" id="app" data-mode="novel" data-view="read">
+  <!-- Rail: always there on desktop. The panel next to it folds away; the rail doesn't. -->
+  <nav class="rail" aria-label="Tachivel">
+    <div class="mode" role="radiogroup" aria-label="Shelf">
+      <button type="button" class="rb" data-mode="novel" role="radio" aria-checked="true" title="Novels" aria-label="Novels"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h13v15H7a1 1 0 0 0 0 2h12v2H7a3 3 0 0 1-3-3V5a2 2 0 0 1 2-2z"/></svg></button>
+      <button type="button" class="rb" data-mode="comic" role="radio" aria-checked="false" title="Comics" aria-label="Comics"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/></svg></button>
+    </div>
+    <button type="button" class="rb" id="railLibrary" title="Library" aria-label="Library"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h4v16H4zm5 0h4v16H9zm5.3 1.4 3.9-1 4.1 15.4-3.9 1z"/></svg></button>
+    <!-- The open book: its cover takes you back to the page. Chapters and images live in the panel, not here. -->
+    <button type="button" class="rb novel book-btn" id="railBook" title="Back to the book" aria-label="Back to the book"><img id="railCover" alt="" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h13v15H7a1 1 0 0 0 0 2h12v2H7a3 3 0 0 1-3-3V5a2 2 0 0 1 2-2z"/></svg></button>
+    <button type="button" class="rb novel" id="railSearch" title="Search the book (/)" aria-label="Search the book"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M10 4a6 6 0 1 0 3.7 10.7l4.3 4.3 1.4-1.4-4.3-4.3A6 6 0 0 0 10 4zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8z"/></svg></button>
+    <span class="grow"></span>
+    <button type="button" class="rb cloud" id="accountBtn" title="Sign in" aria-label="Sign in" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 10A7.5 7.5 0 0 0 5.4 8 6 6 0 0 0 6 20h13a5 5 0 0 0 .4-10z"/></svg></button>
+    <button type="button" class="rb novel reading" id="panelBtn" title="Hide the panel (C)" aria-label="Hide the panel" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm1 2v12h4V6zm6 0v12h8V6z"/></svg></button>
+  </nav>
+
+  <!-- Panel: chapters and images. Desktop: a column that folds away. Phone: a sheet that rises above the control bar. -->
+  <aside class="side" id="side" aria-label="Contents">
+    <div class="side-top">
+      <button type="button" class="ib" id="sideLibrary" aria-label="Library" title="Library"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h4v16H4zm5 0h4v16H9zm5.3 1.4 3.9-1 4.1 15.4-3.9 1z"/></svg></button>
+      <button type="button" class="ib" id="sideSearch" aria-label="Search the book" title="Search the book"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M10 4a6 6 0 1 0 3.7 10.7l4.3 4.3 1.4-1.4-4.3-4.3A6 6 0 0 0 10 4zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8z"/></svg></button>
+      <button type="button" class="ib cloud" id="sideAccount" aria-label="Sign in" title="Sign in" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 10A7.5 7.5 0 0 0 5.4 8 6 6 0 0 0 6 20h13a5 5 0 0 0 .4-10z"/></svg></button>
+      <span class="grow"></span>
+      <button type="button" class="ib" id="sideClose" aria-label="Close" title="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12 19 17.6 17.6 19 12 13.4 6.4 19 5 17.6 10.6 12 5 6.4z"/></svg></button>
+    </div>
     <div class="book">
-      <div class="book-title" id="bookTitle">No book open</div>
-      <div class="book-author" id="bookAuthor"></div>
-      <div class="prog" aria-hidden="true"><i id="progBar"></i></div>
-      <div class="meta" id="bookMeta"></div>
+      <img class="cover" id="sideCover" alt="" hidden>
+      <div class="book-info">
+        <div class="book-title" id="bookTitle">No book open</div>
+        <div class="book-author" id="bookAuthor"></div>
+        <div class="prog" aria-hidden="true"><i id="progBar"></i></div>
+        <div class="meta" id="bookMeta"></div>
+      </div>
     </div>
     <div class="tabs" role="tablist">
       <button type="button" role="tab" id="tabCh" aria-selected="true">Chapters</button>
@@ -26,76 +52,150 @@
     <div class="pane" id="chPane">
       <label class="goto">
         <span class="sr">Go to chapter</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M10 4a6 6 0 1 0 3.7 10.7l4.3 4.3 1.4-1.4-4.3-4.3A6 6 0 0 0 10 4zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8z"/></svg>
         <input id="goto" type="text" inputmode="search" autocomplete="off" placeholder="Chapter number or title" disabled>
         <kbd>G</kbd>
       </label>
       <ul class="ch" id="chapters"></ul>
     </div>
     <div class="gallery" id="gallery" hidden></div>
-    <div class="side-foot">
-      <div class="menu-pop" id="moreMenu" role="menu" aria-label="Book and library" hidden>
-        <button type="button" role="menuitem" id="downloadBtn" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3h2v10.2l3.6-3.6L18 11l-6 6-6-6 1.4-1.4 3.6 3.6zM5 19h14v2H5z"/></svg>
-          <span class="lbl">Download EPUB</span><span class="hint">Save a copy to Books or Files</span>
-        </button>
-        <button type="button" role="menuitem" id="openBtn">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/></svg>
-          <span class="lbl">Open another book</span><span class="hint">An EPUB on this device</span>
-        </button>
-        <button type="button" role="menuitem" id="accountBtn" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 10A7.5 7.5 0 0 0 5.4 8 6 6 0 0 0 6 20h13a5 5 0 0 0 .4-10z"/></svg>
-          <span class="lbl" id="accountLabel">Sign in</span><span class="hint" id="accountHint"></span>
-        </button>
-      </div>
-      <button class="more" id="moreBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="moreMenu">
-        <span class="dot" id="syncDot" aria-hidden="true"></span>
-        <span>Book &amp; library</span>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 15.4 12 10.8l4.6 4.6L18 14l-6-6-6 6z"/></svg>
-      </button>
-      <input id="file" type="file" accept=".epub,application/epub+zip" hidden>
-    </div>
+    <input id="file" type="file" accept=".epub,application/epub+zip" hidden>
   </aside>
 
-  <main class="main" id="main">
-    <div class="empty" id="empty">
-      <div class="drop" id="drop">
-        <h1 id="emptyTitle">Drop an EPUB here</h1>
-        <p id="emptyMsg">It's read on this device. Sign in to keep it in your library for your other devices.</p>
-        <button class="btn" id="emptySignIn" type="button" hidden>Sign in to your library</button>
-        <button class="btn" id="pickBtn" type="button">Choose a file</button>
+  <div class="stage">
+    <main class="main" id="main">
+      <div class="empty" id="empty">
+        <div class="drop" id="drop">
+          <h1 id="emptyTitle">Drop an EPUB here</h1>
+          <p id="emptyMsg">It's read on this device. Sign in to keep it in your library for your other devices.</p>
+          <button class="btn" id="emptySignIn" type="button" hidden>Sign in to your library</button>
+          <button class="btn" id="pickBtn" type="button">Choose a file</button>
+        </div>
       </div>
-    </div>
-    <article class="text" id="text" hidden></article>
-  </main>
+      <article class="text" id="text" hidden></article>
+    </main>
+    <button class="back-pill" id="backPill" type="button" hidden>
+      <svg class="pk-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 0 0-9 9v6a3 3 0 0 0 3 3h2v-8H5v-1a7 7 0 0 1 14 0v1h-3v8h2a3 3 0 0 0 3-3v-6a9 9 0 0 0-9-9z"/></svg>
+      <svg class="pk-back" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z"/></svg>
+      <span class="pk" id="pillK">Back to</span><span class="pt" id="pillT"></span>
+    </button>
+
+    <section class="library" id="library" aria-label="Library" hidden>
+      <header class="lib-head">
+        <div class="lib-title">
+          <div class="mode-seg" role="radiogroup" aria-label="Shelf">
+            <button type="button" data-mode="novel" role="radio" aria-checked="true">Novels</button>
+            <button type="button" data-mode="comic" role="radio" aria-checked="false">Comics</button>
+          </div>
+          <h1>Library</h1>
+          <p><span id="libSub">Your place follows you to every device you sign in on.</span> <button class="link" id="libAccount" type="button" hidden>Account</button></p>
+        </div>
+        <button class="btn ghost" id="addBtn" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>Open an EPUB</button>
+      </header>
+      <div class="hero" id="hero" hidden>
+        <img class="hero-glow" id="heroGlow" alt="" aria-hidden="true">
+        <img class="hero-cover" id="heroCover" alt="">
+        <div class="hero-cover gen" id="heroGen" aria-hidden="true" hidden><span id="heroGenTitle"></span><i></i></div>
+        <div class="hero-info">
+          <div class="hero-kicker">Continue listening</div>
+          <h2 id="heroTitle"></h2>
+          <div class="hero-where" id="heroWhere"></div>
+          <blockquote class="hero-quote" id="heroQuote"></blockquote>
+          <div class="hero-prog"><div class="prog" aria-hidden="true"><i id="heroBar"></i></div><span id="heroLeft"></span></div>
+          <div class="hero-acts">
+            <button class="btn big" id="resumeBtn" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>Resume</button>
+            <button class="btn ghost big" id="heroChapters" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>Chapters</button>
+            <button class="btn ghost big" id="downloadBtn" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3h2v10.2l3.6-3.6L18 11l-6 6-6-6 1.4-1.4 3.6 3.6zM5 19h14v2H5z"/></svg>Download EPUB</button>
+          </div>
+        </div>
+      </div>
+      <p class="shelf-note" id="shelfNote">Tachivel keeps one book at a time for now. Opening another EPUB (or dropping one anywhere on this window) replaces the one above, and your place in it.</p>
+    </section>
+
+    <section class="comics" id="comics" aria-label="Comics" hidden>
+      <div class="mode-seg" role="radiogroup" aria-label="Shelf">
+        <button type="button" data-mode="novel" role="radio" aria-checked="false">Novels</button>
+        <button type="button" data-mode="comic" role="radio" aria-checked="true">Comics</button>
+      </div>
+      <span class="badge">Coming later</span>
+      <h1>Comics</h1>
+      <p>Your manga and manhwa shelf will live here, read through your own Suwayomi server with the Keiyoushi extensions you already use. Switch back to Novels to keep listening.</p>
+    </section>
+  </div>
 
   <footer class="bar" id="bar">
-    <button class="ib menu" id="menuBtn" type="button" aria-label="Chapter list (C)" title="Chapter list (C)">
-      <svg viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+    <button class="ib menu" id="menuBtn" type="button" aria-label="Chapters (C)" title="Chapters (C)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
     </button>
     <div class="btns">
-      <button class="ib" id="prevCh" type="button" aria-label="Previous chapter" title="Previous chapter (Shift+↑)"><svg viewBox="0 0 24 24"><path d="M12 6l-7 7h14zM5 16h14v2H5z"/></svg></button>
-      <button class="ib" id="prevS" type="button" aria-label="Previous sentence" title="Previous sentence (←)"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zM9.5 12 18 18V6z"/></svg></button>
-      <button class="ib play" id="playBtn" type="button" aria-label="Play" title="Play / pause (Space)"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
-      <button class="ib" id="nextS" type="button" aria-label="Next sentence" title="Next sentence (→)"><svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg></button>
-      <button class="ib" id="nextCh" type="button" aria-label="Next chapter" title="Next chapter (Shift+↓)"><svg viewBox="0 0 24 24"><path d="M12 18l7-7H5zM5 6h14v2H5z"/></svg></button>
+      <button class="ib wide-only" id="prevCh" type="button" aria-label="Previous chapter" title="Previous chapter (Shift+↑)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6l-7 7h14zM5 16h14v2H5z"/></svg></button>
+      <button class="ib" id="prevS" type="button" aria-label="Previous sentence" title="Previous sentence (←)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h2v12H6zM9.5 12 18 18V6z"/></svg></button>
+      <button class="ib play" id="playBtn" type="button" aria-label="Play" title="Play / pause (Space)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button>
+      <button class="ib" id="nextS" type="button" aria-label="Next sentence" title="Next sentence (→)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg></button>
+      <button class="ib wide-only" id="nextCh" type="button" aria-label="Next chapter" title="Next chapter (Shift+↓)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 18l7-7H5zM5 6h14v2H5z"/></svg></button>
     </div>
-    <span class="pos" id="pos"></span>
+    <div class="now">
+      <div class="now-t" id="nowTitle"></div>
+      <div class="pos" id="pos"></div>
+    </div>
     <div class="ctl">
-      <button class="chip" id="searchBtn" type="button" title="Search the book (/)">Search <kbd>/</kbd></button>
-      <label class="chip"><span class="sr">Voice</span><select id="voice"></select></label>
-      <div class="chip speed">
-        <button type="button" id="rateDown" aria-label="Slower" title="Slower ( [ or − )">−</button>
-        <label><span class="sr">Speed</span><input id="rate" type="range" min="0.6" max="2.5" step="0.05" value="1"></label>
-        <output id="rateOut">1.00×</output>
-        <button type="button" id="rateUp" aria-label="Faster" title="Faster ( ] or + )">+</button>
-      </div>
-      <div class="chip size">
-        <button type="button" id="sizeDown" aria-label="Smaller text">A−</button>
-        <button type="button" id="sizeUp" aria-label="Larger text">A+</button>
-      </div>
-      <button class="chip" id="themeBtn" type="button" title="Theme">Ember</button>
+      <button class="chip wide-only" id="voiceChip" type="button" title="Voice"><span id="voiceName">Voice</span></button>
+      <button class="chip mono wide-only" id="rateChip" type="button" title="Speed ( [ and ] )"><span id="rateOut">1.00×</span></button>
+      <button class="chip aa" id="aaBtn" type="button" title="Voice, speed, text and theme" aria-label="Voice, speed, text and theme" aria-haspopup="dialog" aria-expanded="false" aria-controls="listen">Aa</button>
     </div>
   </footer>
+
+  <div class="scrim" id="scrim" hidden></div>
+
+  <!-- One panel for everything about how it sounds and looks. Desktop: pops up above Aa. Phone: a sheet above the bar. -->
+  <section class="pop" id="listen" role="dialog" aria-labelledby="listenTitle" hidden>
+    <header class="pop-head">
+      <h2 id="listenTitle">Listening</h2>
+      <button type="button" class="ib" id="listenClose" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12 19 17.6 17.6 19 12 13.4 6.4 19 5 17.6 10.6 12 5 6.4z"/></svg></button>
+    </header>
+    <button type="button" class="pop-search" id="listenSearch"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M10 4a6 6 0 1 0 3.7 10.7l4.3 4.3 1.4-1.4-4.3-4.3A6 6 0 0 0 10 4zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8z"/></svg>Search the book<kbd>/</kbd></button>
+    <div class="field">
+      <div class="label" id="voiceLabel">Voice</div>
+      <div class="voices" id="voices" role="listbox" aria-labelledby="voiceLabel"></div>
+    </div>
+    <div class="field">
+      <label class="label" for="rate">Speed</label>
+      <div class="rate-row">
+        <input id="rate" type="range" min="0.6" max="2.5" step="0.05" value="1">
+        <output id="rateVal" for="rate">1.00×</output>
+      </div>
+      <div class="presets" id="presets">
+        <button type="button" data-rate="1">1×</button>
+        <button type="button" data-rate="1.25">1.25×</button>
+        <button type="button" data-rate="1.5">1.5×</button>
+        <button type="button" data-rate="2">2×</button>
+      </div>
+    </div>
+    <div class="field">
+      <div class="label">Text size</div>
+      <div class="seg size">
+        <button type="button" id="sizeDown" aria-label="Smaller text">A−</button>
+        <output id="sizeOut">20 px</output>
+        <button type="button" id="sizeUp" aria-label="Larger text">A+</button>
+      </div>
+    </div>
+    <div class="field">
+      <div class="label" id="widthLabel">Page width</div>
+      <div class="widths" id="widths" role="radiogroup" aria-labelledby="widthLabel">
+        <button type="button" role="radio" data-width="narrow"><span class="glyph"><i></i><i></i><i></i></span>Narrow</button>
+        <button type="button" role="radio" data-width="standard"><span class="glyph"><i></i><i></i><i></i></span>Standard</button>
+        <button type="button" role="radio" data-width="wide"><span class="glyph"><i></i><i></i><i></i></span>Wide</button>
+      </div>
+    </div>
+    <div class="field">
+      <div class="label" id="themeLabel">Theme</div>
+      <div class="swatches" id="swatches" role="radiogroup" aria-labelledby="themeLabel">
+        <button type="button" role="radio" data-pick="ember"><span class="sw" data-theme="ember"><i></i><i></i><i></i></span>Ember</button>
+        <button type="button" role="radio" data-pick="dark"><span class="sw" data-theme="dark"><i></i><i></i><i></i></span>True Dark</button>
+        <button type="button" role="radio" data-pick="light"><span class="sw" data-theme="light"><i></i><i></i><i></i></span>Light</button>
+      </div>
+    </div>
+  </section>
 </div>
 
 <dialog id="search" aria-label="Search the book">

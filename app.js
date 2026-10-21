@@ -3,12 +3,12 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const THEMES = [["ember", "Ember"], ["dark", "True Dark"], ["light", "Light"]];
 const STORE_KEY = "tachivel:state";
 
 // ---------- Persistence ----------
+// width, panel, view and mode are this device's own; they never sync to other devices.
 const state = Object.assign(
-  { bookId: null, ch: 0, s: 0, voice: null, rate: 1, theme: "ember", size: 20 },
+  { bookId: null, ch: 0, s: 0, voice: null, rate: 1, theme: "ember", size: 20, width: "standard", panel: true, view: "read", mode: "novel" },
   readState()
 );
 function readState() {
@@ -146,7 +146,8 @@ function imageType(path, declared) {
   return RASTER[path.split(".").pop().toLowerCase()] || null;
 }
 
-async function parseEpub(file, onProgress) {
+// Open the zip and its package file (OPF): metadata, the manifest of files, and the reading order.
+async function openPackage(file) {
   const zip = await JSZip.loadAsync(file);
   const entry = (p) => zip.file(p) || zip.file(decodeURIComponent(p));
   const read = async (p) => { const f = entry(p); return f ? f.async("string") : null; };
@@ -155,9 +156,6 @@ async function parseEpub(file, onProgress) {
   const opfPath = parseXml(container).getElementsByTagNameNS("*", "rootfile")[0]?.getAttribute("full-path");
   const opf = parseXml(await read(opfPath));
   const base = dirOf(opfPath);
-  const title = clean(byTag(opf, "title")[0]?.textContent || (file.name || "Untitled book").replace(/\.epub$/i, ""));
-  const author = clean(byTag(opf, "creator")[0]?.textContent || "");
-
   const items = {};
   const typeByPath = {};
   for (const it of byTag(opf, "item")) {
@@ -165,6 +163,23 @@ async function parseEpub(file, onProgress) {
     items[it.getAttribute("id")] = { href, type: it.getAttribute("media-type") || "", props: it.getAttribute("properties") || "" };
     typeByPath[href] = it.getAttribute("media-type") || "";
   }
+  return { entry, read, opf, base, items, typeByPath };
+}
+// The cover picture: EPUB3 marks it "cover-image"; EPUB2 points at it from <meta name="cover">.
+async function coverOf({ entry, opf, items }) {
+  const id = byTag(opf, "meta").find((m) => m.getAttribute("name") === "cover")?.getAttribute("content");
+  const it = Object.values(items).find((i) => i.props.split(/\s+/).includes("cover-image")) || items[id];
+  const f = it && entry(it.href);
+  const type = it && imageType(it.href, it.type);
+  return f && type ? new Blob([await f.async("arraybuffer")], { type }) : null;
+}
+
+async function parseEpub(file, onProgress) {
+  const pkg = await openPackage(file);
+  const { entry, read, opf, items, typeByPath } = pkg;
+  const title = clean(byTag(opf, "title")[0]?.textContent || (file.name || "Untitled book").replace(/\.epub$/i, ""));
+  const author = clean(byTag(opf, "creator")[0]?.textContent || "");
+
   const spineEl = byTag(opf, "spine")[0];
   const spine = byTag(opf, "itemref").map((r) => items[r.getAttribute("idref")]).filter(Boolean);
 
@@ -233,7 +248,8 @@ async function parseEpub(file, onProgress) {
     if (i % 10 === 0) { onProgress(i + 1, spine.length); await new Promise((r) => setTimeout(r)); }
   }
   if (!chapters.length) throw new Error("No readable text found. The book may be DRM-protected or image-only.");
-  return { v: BOOK_VERSION, id: `${title}|${author}`, title, author, chapters, images, toc: buildRows(toc, chapters) };
+  const cover = await coverOf(pkg).catch(() => null);
+  return { v: BOOK_VERSION, id: `${title}|${author}`, title, author, cover, chapters, images, toc: buildRows(toc, chapters) };
 }
 
 // Merge the table of contents with the chapters actually kept, so every chapter has exactly one row.
@@ -287,7 +303,7 @@ function renderChapterList() {
       li.onclick = () => { collapsed.has(i) ? collapsed.delete(i) : collapsed.add(i); updateRows(); };
     } else {
       li.append(node("span", "tt", r.t));
-      li.onclick = () => { openChapter(r.ch, 0); closeDrawer(); };
+      li.onclick = () => jump(r.ch, 0);
     }
     ul.appendChild(li);
     return li;
@@ -317,15 +333,38 @@ function markCurrentRow() {
     rowEls[i].classList.toggle("done", r.ch != null && r.ch < state.ch);
   });
   rowEls[cur]?.scrollIntoView({ block: "nearest" });
-  // Meta line: where you are in the book's structure.
-  const where = anc.map((a) => book.toc[a].t).pop();
-  const pct = Math.round(((state.ch + 1) / book.chapters.length) * 100);
-  $("bookMeta").textContent = where ? `${pct}% · ${where}` : `${pct}%`;
+}
+
+// ---------- Progress: by words, so a long chapter counts for more than a short one ----------
+const WPM = 170; // roughly what a macOS voice reads per minute at 1×
+let chStart = [], totalWords = 1;
+const wordCount = (t) => t.split(/\s+/).filter(Boolean).length;
+function countWords(b) {
+  let n = 0;
+  chStart = b.chapters.map((c) => { const at = n; n += c.s.reduce((k, x) => k + wordCount(x), 0); return at; });
+  totalWords = Math.max(1, n);
+}
+function progress() {
+  const ss = book.chapters[state.ch].s;
+  let read = chStart[state.ch] || 0;
+  for (let i = 0; i < state.s; i++) read += wordCount(ss[i]);
+  const mins = (totalWords - read) / (WPM * state.rate);
+  const left = mins < 60 ? `about ${Math.max(1, Math.round(mins))} min left` : `about ${Math.round(mins / 60)} h left`;
+  return { pct: Math.min(100, Math.round((read / totalWords) * 100)), left };
+}
+function updateProgress() {
+  if (!book || !book.chapters[state.ch]) return;
+  const { pct, left } = progress();
+  const ch = book.chapters[state.ch];
   $("progBar").style.width = `${pct}%`;
+  $("bookMeta").textContent = `${pct}% read, ${left}`;
+  $("nowTitle").textContent = ch.t;
+  $("pos").textContent = `Sentence ${state.s + 1} of ${ch.s.length}, ${pct}% of the book`;
+  if (state.view === "library") renderLibrary();
 }
 
 function renderChapter() {
-  const ch = book.chapters[state.ch];
+  const ch = book.chapters[shownCh];
   const art = $("text");
   art.replaceChildren();
   let k = 0;
@@ -370,24 +409,26 @@ function renderGallery() {
     img.alt = im.alt;
     img.loading = "lazy";
     btn.append(img, node("span", "thumb-ch", book.chapters[im.ch].t));
-    btn.onclick = () => {
-      openChapter(im.ch, Math.min(im.s, book.chapters[im.ch].s.length - 1));
-      $("text").querySelector(`img[data-img="${i}"]`)?.scrollIntoView({ block: "start", behavior: "instant" });
-      closeDrawer();
-    };
+    btn.onclick = () => jump(im.ch, Math.min(im.s, book.chapters[im.ch].s.length - 1), `img[data-img="${i}"]`);
     grid.appendChild(btn);
   });
 }
+let tab = "chapters";
 function showTab(name) {
+  tab = name;
   const imgs = name === "images";
   $("tabCh").setAttribute("aria-selected", !imgs);
   $("tabImg").setAttribute("aria-selected", imgs);
   $("chPane").hidden = imgs;
   $("gallery").hidden = !imgs;
+  applyLayout();
 }
 
 let litIndex = -1;
 function highlight(scroll = true) {
+  updateProgress();
+  updatePill();
+  if (shownCh !== state.ch) return; // reading elsewhere while the voice carries on: nothing to light up
   if (litIndex >= 0 && sentEls[litIndex]) {
     const old = sentEls[litIndex];
     old.classList.remove("on");
@@ -397,7 +438,6 @@ function highlight(scroll = true) {
   const el = sentEls[state.s];
   if (!el) return;
   el.classList.add("on");
-  $("pos").textContent = `${state.s + 1} / ${sentEls.length}`;
   if (scroll) keepInView(el);
 }
 function keepInView(el) {
@@ -419,6 +459,7 @@ function splitWrap(el, text, a, b, tag, cls) {
   el.replaceChildren(text.slice(0, a), node(tag, cls, text.slice(a, b)), text.slice(b));
 }
 function markWord(charIndex) {
+  if (shownCh !== state.ch) return;
   const el = sentEls[state.s];
   if (!el) return;
   const text = book.chapters[state.ch].s[state.s];
@@ -429,16 +470,28 @@ function markWord(charIndex) {
 }
 
 // ---------- Navigation ----------
+// Two positions: the place (where the voice is, and the bookmark that syncs) and the chapter on screen.
+// They move together while you follow along. Browsing while it reads leaves the place alone.
+let shownCh = -1;
+let returnTo = null; // paused jump: where you were, for the "Back to" pill
+function showChapter(ch) {
+  shownCh = ch;
+  litIndex = -1;
+  renderChapter();
+  $("main").scrollTo({ top: 0, behavior: "instant" });
+  if (ch === state.ch) highlight();
+  updatePill();
+}
+// Move the place (and the page with it). Prev/next, a clicked sentence, the arrow keys.
 function openChapter(ch, s = 0, { speak = true, touch = true } = {}) {
   if (!book) return;
   ch = Math.max(0, Math.min(book.chapters.length - 1, ch));
-  const changed = ch !== state.ch || !sentEls.length;
   state.ch = ch;
-  if (changed) { litIndex = -1; renderChapter(); $("main").scrollTo({ top: 0, behavior: "instant" }); }
+  if (ch !== shownCh || !sentEls.length) showChapter(ch);
   goSentence(s, { speak, touch });
 }
 function goSentence(i, { speak = true, touch = true } = {}) {
-  state.s = Math.max(0, Math.min(sentEls.length - 1, i));
+  state.s = Math.max(0, Math.min(book.chapters[state.ch].s.length - 1, i));
   // Remember the place by chapter title and sentence text, not just numbers, so it survives a re-built EPUB.
   state.chKey = book.chapters[state.ch].t;
   state.sText = book.chapters[state.ch].s[state.s];
@@ -447,9 +500,41 @@ function goSentence(i, { speak = true, touch = true } = {}) {
   if (playing && speak) speakCurrent();
 }
 function advance() {
-  if (state.s + 1 < sentEls.length) goSentence(state.s + 1);
-  else if (state.ch + 1 < book.chapters.length) openChapter(state.ch + 1, 0);
-  else pause();
+  if (state.s + 1 < book.chapters[state.ch].s.length) goSentence(state.s + 1);
+  else if (state.ch + 1 >= book.chapters.length) pause();
+  else if (shownCh === state.ch) openChapter(state.ch + 1, 0); // following along: turn the page
+  else { state.ch++; goSentence(0); } // reading elsewhere: the voice moves on quietly
+}
+// A chapter, picture or search result picked from a list. While it reads: just look, the voice carries on.
+// While paused: go there, and offer the way back.
+function jump(ch, s = 0, selector = null) {
+  if (playing) {
+    if (ch !== shownCh) showChapter(ch);
+  } else {
+    if (!returnTo && (ch !== state.ch || s !== state.s)) returnTo = { ch: state.ch, s: state.s };
+    openChapter(ch, s);
+    if (returnTo && returnTo.ch === state.ch && returnTo.s === state.s) returnTo = null;
+  }
+  afterJump();
+  const target = selector ? $("text").querySelector(selector) : sentEls[s];
+  target?.scrollIntoView({ block: selector ? "start" : "center", behavior: "instant" });
+  updatePill();
+}
+function updatePill() {
+  const pill = $("backPill");
+  if (!book) { pill.hidden = true; return; }
+  const away = shownCh !== state.ch;
+  const back = away ? { ch: state.ch, s: state.s } : returnTo;
+  pill.hidden = !back;
+  if (!back) return;
+  pill.dataset.kind = away && playing ? "playing" : "back";
+  $("pillK").textContent = away && playing ? "Now playing" : "Back to";
+  $("pillT").textContent = book.chapters[back.ch].t;
+}
+function pillBack() {
+  if (shownCh !== state.ch) { showChapter(state.ch); keepInView(sentEls[state.s]); }
+  else if (returnTo) { const r = returnTo; returnTo = null; openChapter(r.ch, r.s); }
+  updatePill();
 }
 
 // ---------- Speech ----------
@@ -472,23 +557,41 @@ function voiceRank(v) {
   if (en) return 3;
   return 4;
 }
+const voiceName = (v) => v.name.replace(/\s*\((premium|enhanced)\)\s*/i, "").trim();
+function voiceTier(v) {
+  const n = `${v.name} ${v.voiceURI}`.toLowerCase();
+  return n.includes("premium") ? "Premium" : n.includes("enhanced") ? "Enhanced" : "";
+}
 function loadVoices() {
   voices = speechSynthesis.getVoices()
     .filter((v) => v.lang.startsWith("en") && !NOVELTY.test(v.name))
     .sort((a, b) => voiceRank(a) - voiceRank(b) || a.name.localeCompare(b.name));
-  const sel = $("voice");
-  sel.replaceChildren();
-  for (const v of voices) {
-    const o = document.createElement("option");
-    o.value = v.voiceURI;
-    o.textContent = `${v.name} · ${v.lang}`;
-    sel.appendChild(o);
-  }
-  if (!voices.length) { sel.append(node("option", null, "No voices found")); return; }
-  if (!voices.some((v) => v.voiceURI === state.voice)) {
+  if (voices.length && !voices.some((v) => v.voiceURI === state.voice)) {
     state.voice = voices[0].voiceURI; // list is sorted best-first
   }
-  sel.value = state.voice;
+  const box = $("voices");
+  box.replaceChildren();
+  if (!voices.length) box.append(node("div", "label", "No voices found"));
+  for (const v of voices) {
+    const b = node("button", "voice");
+    b.type = "button";
+    b.setAttribute("role", "option");
+    b.dataset.uri = v.voiceURI;
+    const name = node("span", null, voiceName(v));
+    name.append(node("span", "lang", v.lang));
+    b.append(svgIcon("M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"), name, node("span", voiceTier(v) ? "tier" : null, voiceTier(v)));
+    box.appendChild(b);
+  }
+  applySettings();
+}
+function svgIcon(d) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", d);
+  svg.appendChild(p);
+  return svg;
 }
 function speakCurrent() {
   const t = ++token;
@@ -516,11 +619,14 @@ const ICON_PAUSE = "M7 5h4v14H7zM13 5h4v14h-4z";
 const setPlayIcon = (d) => $("playBtn").querySelector("path").setAttribute("d", d);
 function play() {
   if (!book) return;
+  returnTo = null; // listening from here: this is the place now
+  if (shownCh !== state.ch) showChapter(state.ch);
   playing = true;
   document.body.classList.add("playing");
   setPlayIcon(ICON_PAUSE);
   $("playBtn").setAttribute("aria-label", "Pause");
   keepInView(sentEls[state.s]);
+  if (state.view === "library") renderLibrary();
   speakCurrent();
 }
 function pause() {
@@ -536,12 +642,24 @@ function pause() {
 const toggle = () => (playing ? pause() : play());
 
 // ---------- Settings ----------
+// Page width in characters per line. Wide stops at 84: past that, the eye loses its place on the way back.
+const MEASURE = { narrow: "56ch", standard: "66ch", wide: "84ch" };
 function applySettings() {
   document.documentElement.dataset.theme = state.theme;
-  $("themeBtn").textContent = THEMES.find((t) => t[0] === state.theme)?.[1] || "Ember";
   $("text").style.setProperty("--size", `${state.size}px`);
+  $("text").style.setProperty("--measure", MEASURE[state.width] || MEASURE.standard);
   $("rate").value = state.rate;
-  $("rateOut").textContent = `${Number(state.rate).toFixed(2)}×`;
+  const rate = `${Number(state.rate).toFixed(2)}×`;
+  $("rateOut").textContent = rate;
+  $("rateVal").textContent = rate;
+  $("sizeOut").textContent = `${state.size} px`;
+  for (const b of $("presets").children) b.classList.toggle("on", Math.abs(+b.dataset.rate - state.rate) < 0.001);
+  for (const b of $("widths").children) b.setAttribute("aria-checked", b.dataset.width === state.width);
+  for (const b of $("swatches").children) b.setAttribute("aria-checked", b.dataset.pick === state.theme);
+  for (const b of $("voices").querySelectorAll(".voice")) b.setAttribute("aria-selected", b.dataset.uri === state.voice);
+  const v = voices.find((x) => x.voiceURI === state.voice);
+  $("voiceName").textContent = v ? voiceName(v) : "Voice";
+  updateProgress(); // time left depends on speed
 }
 
 // ---------- Go to chapter ----------
@@ -573,8 +691,7 @@ function gotoSubmit() {
     $("goto").value = "";
     filterChapters();
     $("goto").blur();
-    openChapter(ch, 0);
-    closeDrawer();
+    jump(ch, 0);
   }
 }
 
@@ -615,7 +732,7 @@ function markSel() {
 }
 function jumpTo(c, s) {
   $("search").close();
-  openChapter(c, s);
+  jump(c, s);
 }
 function openSearch() {
   if (!book) return;
@@ -623,11 +740,111 @@ function openSearch() {
   $("q").select();
 }
 
-// ---------- Drawer (narrow screens) ----------
-const closeDrawer = () => $("app").classList.remove("drawer");
-function toggleChapters() {
-  if (matchMedia("(max-width: 800px)").matches) $("app").classList.toggle("drawer");
-  else { showTab("chapters"); $("goto").focus(); }
+// ---------- Layout: Novels/Comics, reading/library, the panel ----------
+// Desktop: the panel is a column beside the rail that folds away. Phone: it's a sheet that rises above the bar.
+const isPhone = () => matchMedia("(max-width: 800px)").matches;
+function applyLayout() {
+  const app = $("app");
+  const novel = state.mode === "novel";
+  app.dataset.mode = state.mode;
+  app.dataset.view = state.view;
+  app.classList.toggle("panel-closed", !state.panel);
+  $("main").hidden = !novel || state.view !== "read";
+  $("library").hidden = !novel || state.view !== "library";
+  $("comics").hidden = novel;
+  for (const b of document.querySelectorAll("button[data-mode]")) b.setAttribute("aria-checked", b.dataset.mode === state.mode);
+  $("railLibrary").classList.toggle("on", !novel || state.view === "library");
+  $("railBook").classList.toggle("on", novel && state.view === "read");
+  const label = state.panel ? "Hide the panel (C)" : "Show the panel (C)";
+  $("panelBtn").setAttribute("aria-pressed", state.panel);
+  $("panelBtn").setAttribute("aria-label", label);
+  $("panelBtn").title = label;
+}
+function setView(view) {
+  state.view = view;
+  saveState();
+  applyLayout();
+  if (view === "library") renderLibrary();
+  // The reading column was hidden, so it lost its scroll position: put the live sentence back in view.
+  else if (shownCh === state.ch && sentEls[state.s]) requestAnimationFrame(() => keepInView(sentEls[state.s]));
+}
+function setMode(mode) {
+  if (mode === state.mode) return;
+  if (mode === "comic" && playing) pause();
+  state.mode = mode;
+  saveState();
+  setSheet(false);
+  setListen(false);
+  applyLayout();
+}
+function setPanel(open) { state.panel = open; saveState(); applyLayout(); }
+function setSheet(open) { $("app").classList.toggle("sheet", open); syncScrim(); }
+const syncScrim = () => ($("scrim").hidden = !($("app").classList.contains("sheet") || !$("listen").hidden));
+const panelOpen = () => (isPhone() ? $("app").classList.contains("sheet") : state.panel);
+function openPanel(name = tab) {
+  if (!isPhone() && state.view !== "read") setView("read"); // the panel lives beside the page, not the shelf
+  showTab(name);
+  if (isPhone()) { setListen(false); setSheet(true); } else setPanel(true);
+}
+function togglePanel(name = tab) {
+  if (panelOpen() && tab === name) isPhone() ? setSheet(false) : setPanel(false);
+  else openPanel(name);
+}
+// After picking a chapter, a picture or a search result: show the page (the desktop panel stays open).
+function afterJump() {
+  if (isPhone()) setSheet(false);
+  if (state.view !== "read") setView("read");
+}
+
+// ---------- Listening panel: voice, speed, text size, page width, theme ----------
+function setListen(open) {
+  $("listen").hidden = !open;
+  $("aaBtn").setAttribute("aria-expanded", open);
+  if (open) {
+    if (isPhone()) setSheet(false);
+    $("voices").querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }
+  syncScrim();
+}
+
+// ---------- Library ----------
+let coverUrl = null;
+function setCovers() {
+  if (coverUrl) URL.revokeObjectURL(coverUrl);
+  coverUrl = book?.cover ? URL.createObjectURL(book.cover) : null;
+  for (const id of ["sideCover", "heroCover", "heroGlow", "railCover"]) {
+    $(id).hidden = !coverUrl;
+    if (coverUrl) $(id).src = coverUrl;
+  }
+  // No cover in the EPUB: a plain one made from the title.
+  $("heroGen").hidden = !!coverUrl || !book;
+  $("heroGenTitle").textContent = book?.title || "";
+}
+// Books saved before covers were kept: take the cover from the saved EPUB once, without a re-import.
+async function fillCover(b) {
+  const saved = await dbGet("epub").catch(() => null);
+  if (saved?.id !== b.id) return;
+  b.cover = await openPackage(saved.blob).then(coverOf).catch(() => null);
+  if (book !== b) return;
+  setCovers();
+  dbPut("current", b).catch(() => {});
+}
+function renderLibrary() {
+  $("libSub").textContent = cloud === "in" ? "Your place follows you to every device you sign in on."
+    : "Sign in to keep your book and your place on every device.";
+  $("libAccount").hidden = !(cloud === "in" || cloud === "error");
+  $("hero").hidden = !book;
+  $("shelfNote").hidden = !book;
+  if (!book) return;
+  const ch = book.chapters[state.ch];
+  const { pct, left } = progress();
+  $("hero").querySelector(".hero-kicker").textContent = playing ? "Now playing" : "Continue listening";
+  $("heroTitle").textContent = book.title;
+  $("heroWhere").textContent = ch.t;
+  $("heroQuote").textContent = ch.s[state.s] ? `“${ch.s[state.s]}”` : "";
+  $("heroBar").style.width = `${pct}%`;
+  $("heroLeft").textContent = `${pct}% read, ${left} at ${Number(state.rate).toFixed(2)}×`;
+  $("resumeBtn").lastChild.textContent = playing ? "Back to the page" : "Resume";
 }
 
 // ---------- Import ----------
@@ -676,7 +893,9 @@ function showBook(b) {
   $("empty").hidden = true;
   $("text").hidden = false;
   $("goto").disabled = false;
-  $("downloadBtn").hidden = false;
+  setCovers();
+  if (b.cover === undefined) fillCover(b);
+  countWords(b);
   imageUrls.forEach((u) => URL.revokeObjectURL(u));
   imageUrls = (b.images || []).map((im) => URL.createObjectURL(im.blob));
   const place = findPlace(b);
@@ -686,7 +905,8 @@ function showBook(b) {
   renderGallery();
   showTab("chapters");
   sentEls = [];
-  state.ch = -1; // force render
+  shownCh = -1; // force render
+  returnTo = null;
   openChapter(place.ch, place.s, { speak: false, touch: false });
 }
 // Find the saved place in this copy of the book, which may be a newer build with renamed or moved chapters:
@@ -783,16 +1003,34 @@ async function checkCloud() {
   if (cloud === "in") syncNow();
 }
 // On opening, and whenever Tachivel comes back to the front: newer book first, then the newest place.
-async function syncNow() {
-  if (cloud !== "in" || syncing || playing) return;
+// Returns what happened: "book" (newer build), "moved" (newer place), "same", "saved" (playing: place sent), "error".
+async function syncNow({ manual = false } = {}) {
+  if (cloud === "error" && manual) cloud = "in"; // a tap on the red cloud is a retry
+  if (cloud !== "in" || syncing || (playing && !manual)) return null;
   syncing = true;
-  try { await fetchNewerBook(); await pull(); }
-  catch { if (cloud === "in") setCloud("error"); }
-  finally { syncing = false; }
+  setSyncBusy(true);
+  try {
+    let r;
+    if (playing) { await push(); r = cloud === "error" ? "error" : "saved"; }
+    else r = (await fetchNewerBook()) ? "book" : (await pull()) ? "moved" : "same";
+    if (r !== "error") setCloud("in"); // turns a red cloud green again after a good retry
+    return r;
+  } catch { setCloud("error"); return "error"; }
+  finally { syncing = false; setSyncBusy(false); }
+}
+const setSyncBusy = (on) => [$("accountBtn"), $("sideAccount")].forEach((b) => b.classList.toggle("busy", on));
+// The cloud button: signed in, it syncs right now and says what it found; signed out, it opens sign-in.
+async function cloudTap() {
+  if (cloud === "out" || cloud === "off") { openAccount(); return; }
+  const r = await syncNow({ manual: true });
+  if (r === "same") toast("All synced: this is the newest build and your latest place.");
+  else if (r === "saved") toast("Your place is saved. Your other devices pick it up when they open.");
+  else if (r === "error") toast("Couldn't reach your library. Check the connection and tap the cloud again.");
+  // "book" and "moved" already announce themselves.
 }
 async function fetchNewerBook() {
   const m = await apiJSON("GET", "/api/book");
-  if (!m || m.upload === book?.cloud) return;
+  if (!m || m.upload === book?.cloud) return false;
   const isUpdate = !!book;
   showLoading(isUpdate ? "Getting the newest chapters…" : "Getting your book…");
   try {
@@ -805,6 +1043,7 @@ async function fetchNewerBook() {
     await openBook(new Blob(parts, { type: "application/epub+zip" }), { cloud: m.upload, name: m.name });
     const added = book.chapters.length - before;
     if (isUpdate) toast(added > 0 ? `New build loaded: ${added} new section${added === 1 ? "" : "s"}.` : "New build of the book loaded.");
+    return true;
   } finally { hideLoading(); }
 }
 async function uploadBook(file) {
@@ -850,10 +1089,11 @@ async function push() {
   catch { if (cloud === "in") setCloud("error"); }
 }
 async function pull() {
-  if (cloud !== "in" || playing) return;
+  if (cloud !== "in" || playing) return false;
   const remote = await apiJSON("GET", "/api/bookmark");
-  if (remote && remote.at > (state.at || 0)) applyRemote(remote);
-  else if (state.at && (!remote || state.at > remote.at)) schedulePush(true); // this device is ahead
+  if (remote && remote.at > (state.at || 0)) { applyRemote(remote); return true; }
+  if (state.at && (!remote || state.at > remote.at)) schedulePush(true); // this device is ahead
+  return false;
 }
 function applyRemote(r) {
   state.at = r.at;
@@ -863,12 +1103,13 @@ function applyRemote(r) {
   if (r.rate) state.rate = r.rate;
   if (r.theme) state.theme = r.theme;
   if (r.size) state.size = r.size;
-  if (r.voice && voices.some((v) => v.voiceURI === r.voice)) { state.voice = r.voice; $("voice").value = r.voice; }
+  if (r.voice && voices.some((v) => v.voiceURI === r.voice)) state.voice = r.voice;
   applySettings();
   if (!book || book.title !== r.book) { state.bookId = `${r.book}|`; saveState(); return; }
   saveState();
   const place = findPlace(book);
-  state.ch = -1;
+  shownCh = -1;
+  returnTo = null;
   openChapter(place.ch, place.s, { speak: false, touch: false });
   toast(`Picked up from your other device: ${book.chapters[place.ch].t}`);
 }
@@ -876,12 +1117,16 @@ function applyRemote(r) {
 // ---------- Sign-in UI ----------
 function setCloud(c) {
   cloud = c;
-  const btn = $("accountBtn");
-  btn.hidden = c === "off";
-  $("accountLabel").textContent = c === "out" ? "Sign in" : "Library";
-  $("accountHint").textContent = c === "in" ? "Synced across your devices" : c === "error" ? "Can't reach the server" : "Get your book and place on every device";
-  btn.classList.toggle("bad", c === "error");
-  $("syncDot").className = `dot ${c === "in" ? "in" : c === "error" ? "bad" : ""}`;
+  // The cloud button's colour is the sync status: green synced, red can't reach the server, grey signed out.
+  const label = c === "in" ? "Synced. Tap to sync now" : c === "error" ? "Can't reach the server. Tap to retry" : "Sign in";
+  for (const btn of [$("accountBtn"), $("sideAccount")]) {
+    btn.hidden = c === "off";
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+    btn.classList.toggle("in", c === "in");
+    btn.classList.toggle("bad", c === "error");
+  }
+  if (state.view === "library") renderLibrary();
   // Signed out with no book here (a new phone or iPad): signing in is the main action.
   const signInFirst = c === "out";
   $("emptySignIn").hidden = !signInFirst;
@@ -934,27 +1179,76 @@ function wire() {
   $("nextS").onclick = () => book && goSentence(state.s + 1);
   $("prevCh").onclick = () => book && openChapter(state.ch - 1, 0);
   $("nextCh").onclick = () => book && openChapter(state.ch + 1, 0);
-  $("menuBtn").onclick = toggleChapters;
-  $("searchBtn").onclick = openSearch;
   $("text").onclick = (e) => {
+    // Clicking a sentence is the one way to say "read from here", even from a chapter you're only browsing.
     const s = e.target.closest(".s");
-    if (s) goSentence(+s.dataset.i);
+    if (s) { returnTo = null; openChapter(shownCh, +s.dataset.i); }
   };
-  $("voice").onchange = (e) => { state.voice = e.target.value; changed(); if (playing) speakCurrent(); };
-  $("rate").oninput = (e) => { state.rate = +e.target.value; applySettings(); changed(); };
-  const nudgeRate = (d) => {
-    state.rate = Math.round(Math.min(2.5, Math.max(0.6, state.rate + d)) * 20) / 20;
+
+  // Rail, phone sheet header, library
+  for (const b of document.querySelectorAll("button[data-mode]")) b.onclick = () => setMode(b.dataset.mode);
+  $("railLibrary").onclick = () => state.mode === "novel" && setView("library");
+  $("railBook").onclick = () => setView("read");
+  $("railSearch").onclick = openSearch;
+  $("backPill").onclick = pillBack;
+  $("libAccount").onclick = openAccount;
+  $("panelBtn").onclick = () => setPanel(!state.panel);
+  $("menuBtn").onclick = () => togglePanel();
+  $("sideLibrary").onclick = () => { setSheet(false); setView("library"); };
+  $("sideSearch").onclick = () => { setSheet(false); openSearch(); };
+  $("sideClose").onclick = () => setSheet(false);
+  $("resumeBtn").onclick = () => { setView("read"); if (!playing) play(); };
+  $("heroChapters").onclick = () => { setView("read"); openPanel("chapters"); };
+  $("downloadBtn").onclick = downloadEpub;
+  $("scrim").onclick = () => { setSheet(false); setListen(false); };
+
+  // Listening panel
+  for (const id of ["aaBtn", "voiceChip", "rateChip"]) $(id).onclick = () => setListen($("listen").hidden);
+  $("listenClose").onclick = () => setListen(false);
+  $("listenSearch").onclick = () => { setListen(false); openSearch(); };
+  // Dialogs close on a click outside them, like every other popup here.
+  for (const d of [$("search"), $("accountDlg")]) {
+    d.addEventListener("click", (e) => {
+      const r = d.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) d.close();
+    });
+  }
+  document.addEventListener("pointerdown", (e) => {
+    if (!$("listen").hidden && !isPhone() && !e.target.closest("#listen, .ctl")) setListen(false);
+  });
+  $("voices").onclick = (e) => {
+    const b = e.target.closest(".voice");
+    if (!b) return;
+    state.voice = b.dataset.uri;
     applySettings(); changed();
     if (playing) speakCurrent();
   };
-  $("rateDown").onclick = () => nudgeRate(-0.05);
-  $("rateUp").onclick = () => nudgeRate(0.05);
+  const setRate = (r) => {
+    state.rate = Math.round(Math.min(2.5, Math.max(0.6, r)) * 20) / 20;
+    applySettings(); changed();
+  };
+  $("rate").oninput = (e) => setRate(+e.target.value);
   $("rate").onchange = () => { if (playing) speakCurrent(); };
+  $("presets").onclick = (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    setRate(+b.dataset.rate);
+    if (playing) speakCurrent();
+  };
+  const nudgeRate = (d) => { setRate(state.rate + d); if (playing) speakCurrent(); };
   $("sizeDown").onclick = () => { state.size = Math.max(14, state.size - 1); applySettings(); changed(); };
   $("sizeUp").onclick = () => { state.size = Math.min(32, state.size + 1); applySettings(); changed(); };
-  $("themeBtn").onclick = () => {
-    const i = THEMES.findIndex((t) => t[0] === state.theme);
-    state.theme = THEMES[(i + 1) % THEMES.length][0];
+  $("widths").onclick = (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    state.width = b.dataset.width;
+    applySettings(); saveState(); // this device only
+    if (shownCh === state.ch && sentEls[state.s]) keepInView(sentEls[state.s]);
+  };
+  $("swatches").onclick = (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    state.theme = b.dataset.pick;
     applySettings(); changed();
   };
 
@@ -974,44 +1268,35 @@ function wire() {
   };
 
   const pick = () => $("file").click();
-  $("pickBtn").onclick = pick;
-  $("openBtn").onclick = pick;
+  for (const id of ["pickBtn", "addBtn"]) $(id).onclick = pick;
   $("file").onchange = (e) => { importFile(e.target.files[0]); e.target.value = ""; };
-  const drop = $("drop");
-  addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
-  addEventListener("dragleave", (e) => { if (!e.relatedTarget) drop.classList.remove("over"); });
-  addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); importFile(e.dataTransfer.files[0]); });
+  const drops = [$("drop")];
+  addEventListener("dragover", (e) => { e.preventDefault(); drops.forEach((d) => d.classList.add("over")); });
+  addEventListener("dragleave", (e) => { if (!e.relatedTarget) drops.forEach((d) => d.classList.remove("over")); });
+  addEventListener("drop", (e) => { e.preventDefault(); drops.forEach((d) => d.classList.remove("over")); importFile(e.dataTransfer.files[0]); });
 
   addEventListener("keydown", (e) => {
-    const typing = e.target.closest("input, select, textarea") || $("search").open;
-    if (typing || e.metaKey || e.ctrlKey || e.altKey || !book) return;
+    if (e.key === "Escape" && (!$("listen").hidden || $("app").classList.contains("sheet"))) {
+      setListen(false); setSheet(false);
+      return;
+    }
+    const typing = e.target.closest("input, select, textarea") || $("search").open || $("accountDlg").open;
+    if (typing || e.metaKey || e.ctrlKey || e.altKey || !book || state.mode !== "novel") return;
     const k = e.key;
     if (k === " ") { e.preventDefault(); toggle(); }
     else if (k === "ArrowRight") { e.preventDefault(); goSentence(state.s + 1); }
     else if (k === "ArrowLeft") { e.preventDefault(); goSentence(state.s - 1); }
     else if (k === "ArrowDown" && e.shiftKey) { e.preventDefault(); openChapter(state.ch + 1, 0); }
     else if (k === "ArrowUp" && e.shiftKey) { e.preventDefault(); openChapter(state.ch - 1, 0); }
-    else if (k === "c" || k === "C") { e.preventDefault(); toggleChapters(); }
-    else if (k === "g" || k === "G") { e.preventDefault(); closeDrawer(); if (matchMedia("(max-width: 800px)").matches) $("app").classList.add("drawer"); showTab("chapters"); $("goto").focus(); }
+    else if (k === "c" || k === "C") { e.preventDefault(); togglePanel("chapters"); }
+    else if (k === "g" || k === "G") { e.preventDefault(); openPanel("chapters"); $("goto").focus(); }
     else if (k === "/") { e.preventDefault(); openSearch(); }
-    else if (k === "[" || k === "-") { e.preventDefault(); $("rateDown").click(); }
-    else if (k === "]" || k === "=" || k === "+") { e.preventDefault(); $("rateUp").click(); }
+    else if (k === "[" || k === "-") { e.preventDefault(); nudgeRate(-0.05); }
+    else if (k === "]" || k === "=" || k === "+") { e.preventDefault(); nudgeRate(0.05); }
   });
 
-  $("downloadBtn").onclick = downloadEpub;
-  // Sidebar "Book & library" menu: opens upward from the footer; any choice, an outside tap or Escape closes it.
-  const setMenu = (open) => {
-    $("moreMenu").hidden = !open;
-    $("moreBtn").setAttribute("aria-expanded", open);
-    if (open) $("moreMenu").querySelector("button:not([hidden])")?.focus();
-  };
-  $("moreBtn").onclick = () => setMenu($("moreMenu").hidden);
-  $("moreMenu").addEventListener("click", (e) => { if (e.target.closest("button")) setMenu(false); });
-  document.addEventListener("pointerdown", (e) => { if (!$("moreMenu").hidden && !e.target.closest(".side-foot")) setMenu(false); });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !$("moreMenu").hidden) { setMenu(false); $("moreBtn").focus(); }
-  });
-  $("accountBtn").onclick = openAccount;
+  $("accountBtn").onclick = cloudTap;
+  $("sideAccount").onclick = () => { setSheet(false); cloudTap(); };
   $("emptySignIn").onclick = openAccount;
   $("loginForm").onsubmit = signIn;
   $("signOutBtn").onclick = () => signOut(false);
@@ -1028,12 +1313,16 @@ function wire() {
   // While open and paused, look for a newer place every 30 s (e.g. the laptop just moved on).
   setInterval(() => { if (document.visibilityState === "visible" && !playing) syncNow(); }, 30000);
 
+  // Sheets and the Listening panel sit just above the control bar, whatever its height.
+  new ResizeObserver(() => document.documentElement.style.setProperty("--bar-h", `${$("bar").offsetHeight}px`)).observe($("bar"));
+
   // Chrome stops speech silently in background tabs after ~15s of one utterance; per-sentence queueing avoids most of it.
   addEventListener("pagehide", () => speechSynthesis.cancel());
 }
 
 async function boot() {
   applySettings();
+  applyLayout();
   wire();
   if ("speechSynthesis" in window) {
     loadVoices();
