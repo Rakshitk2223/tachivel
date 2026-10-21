@@ -2,3 +2,6 @@
 .playwright-mcp/
 *.epub
 node_modules/
+
+# Personal backups (e.g. Tachimanga .tmb): local only, never committed
+backups/
