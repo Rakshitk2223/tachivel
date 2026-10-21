@@ -347,7 +347,7 @@ function countWords(b) {
 function progress() {
   const ss = book.chapters[state.ch].s;
   let read = chStart[state.ch] || 0;
-  for (let i = 0; i < state.s; i++) read += wordCount(ss[i]);
+  for (let i = 0; i < Math.min(state.s, ss.length); i++) read += wordCount(ss[i]);
   const mins = (totalWords - read) / (WPM * state.rate);
   const left = mins < 60 ? `about ${Math.max(1, Math.round(mins))} min left` : `about ${Math.round(mins / 60)} h left`;
   return { pct: Math.min(100, Math.round((read / totalWords) * 100)), left };
@@ -487,8 +487,10 @@ function openChapter(ch, s = 0, { speak = true, touch = true } = {}) {
   if (!book) return;
   ch = Math.max(0, Math.min(book.chapters.length - 1, ch));
   state.ch = ch;
+  // Set the sentence before drawing the page: the old chapter's sentence number means nothing in this one.
+  state.s = Math.max(0, Math.min(book.chapters[ch].s.length - 1, s));
   if (ch !== shownCh || !sentEls.length) showChapter(ch);
-  goSentence(s, { speak, touch });
+  goSentence(state.s, { speak, touch });
 }
 function goSentence(i, { speak = true, touch = true } = {}) {
   state.s = Math.max(0, Math.min(book.chapters[state.ch].s.length - 1, i));
