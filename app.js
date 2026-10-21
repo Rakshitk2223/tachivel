@@ -46,7 +46,7 @@ async function dbPut(key, val) {
 
 // ---------- EPUB parsing ----------
 // Bump when the parsed book format changes; older saved books ask for a re-import.
-const BOOK_VERSION = 2;
+const BOOK_VERSION = 3;
 // Block kinds inside a chapter: [kind, n]
 const TEXT = 0, HEAD = 1, IMAGE = 2, BREAK = 3; // TEXT/HEAD: n sentences · IMAGE: n = image index · BREAK: scene divider
 const BLOCK = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li", "div", "section", "article", "pre", "td", "dd", "dt", "figure", "figcaption", "header", "footer", "aside", "hr", "table", "ul", "ol"]);
@@ -78,8 +78,11 @@ function containsBlock(el) {
   }
   return false;
 }
-// Collect a chapter's content in reading order: [TEXT|HEAD, text] | [IMAGE, {src, alt}] | [BREAK]
-function walk(el, out, base) {
+// Pictures inside class="no-gallery" (front matter, character sheets) show while reading but stay out of the Images tab.
+const noGallery = (el) => (el.getAttribute("class") || "").split(/\s+/).includes("no-gallery");
+// Collect a chapter's content in reading order: [TEXT|HEAD, text] | [IMAGE, {src, alt, ng}] | [BREAK]
+function walk(el, out, base, ng = false) {
+  ng = ng || noGallery(el);
   let buf = "";
   const flush = () => {
     const t = clean(buf);
@@ -97,7 +100,7 @@ function walk(el, out, base) {
     if (tag === "img" || tag === "image") {
       const src = n.getAttribute("src") || n.getAttribute("href") || n.getAttributeNS("http://www.w3.org/1999/xlink", "href");
       flush();
-      if (src) out.push([IMAGE, { src: resolvePath(base, src), alt: clean(n.getAttribute("alt") || "") }]);
+      if (src) out.push([IMAGE, { src: resolvePath(base, src), alt: clean(n.getAttribute("alt") || ""), ng: ng || noGallery(n) }]);
       continue;
     }
     if (tag === "figcaption") {
@@ -106,11 +109,11 @@ function walk(el, out, base) {
       const last = out[out.length - 1];
       // A caption that only repeats the picture's alt text is shown under the picture, not read twice.
       if (last?.[0] === IMAGE && (n.getAttribute("aria-hidden") === "true" || t === last[1].alt)) last[1].cap = t;
-      else if (t) walk(n, out, base);
+      else if (t) walk(n, out, base, ng);
       continue;
     }
     if (HEADING.has(tag)) { flush(); const t = clean(n.textContent); if (t) out.push([HEAD, t]); continue; }
-    if (BLOCK.has(tag) || containsBlock(n)) { flush(); walk(n, out, base); }
+    if (BLOCK.has(tag) || containsBlock(n)) { flush(); walk(n, out, base, ng); }
     else buf += n.textContent;
   }
   flush();
@@ -230,7 +233,7 @@ async function parseEpub(file, onProgress) {
           const type = imageType(key, typeByPath[key]);
           if (!type) continue; // not a plain picture (e.g. SVG/HTML): never turn it into a page-origin blob
           const blob = new Blob([await f.async("arraybuffer")], { type });
-          imageIndex[key] = images.push({ ch: chapters.length, s: s.length, alt: c[1].alt, cap: c[1].cap || "", blob }) - 1;
+          imageIndex[key] = images.push({ ch: chapters.length, s: s.length, alt: c[1].alt, cap: c[1].cap || "", ng: !!c[1].ng, blob }) - 1;
         }
         b.push([IMAGE, imageIndex[key]]);
       } else if (c[0] === BREAK) {
@@ -364,6 +367,7 @@ function updateProgress() {
   $("bookMeta").textContent = `${pct}% read, ${left}`;
   $("nowTitle").textContent = ch.t;
   $("pos").textContent = `Sentence ${state.s + 1} of ${ch.s.length}, ${pct}% of the book`;
+  renderGallery(false);
   if (state.view === "library") renderLibrary();
 }
 
@@ -400,12 +404,21 @@ function renderChapter() {
   document.title = `${ch.t} · Tachivel`;
 }
 
-function renderGallery() {
+// The Images tab holds no spoilers: only pictures you've already read past, and none marked no-gallery.
+// Pictures are stored in reading order, so the ones reached are always a prefix and a count says what's shown.
+let galleryShown = -1;
+const reached = (im) => im.ch < state.ch || (im.ch === state.ch && im.s <= state.s);
+function renderGallery(force = true) {
+  const shown = book.images.filter((im) => !im.ng && reached(im)).length;
+  if (!force && shown === galleryShown) return;
+  galleryShown = shown;
   const grid = $("gallery");
   grid.replaceChildren();
-  $("imgCount").textContent = book.images.length ? String(book.images.length) : "";
-  $("tabImg").hidden = !book.images.length;
+  $("imgCount").textContent = shown ? String(shown) : "";
+  $("tabImg").hidden = !book.images.some((im) => !im.ng);
+  if (!shown) grid.append(node("p", "gallery-empty", "Pictures show up here once you've read past them."));
   book.images.forEach((im, i) => {
+    if (im.ng || !reached(im)) return;
     const btn = node("button", "thumb");
     btn.type = "button";
     const img = node("img");
@@ -870,10 +883,18 @@ async function openBook(file, { cloud: cloudId = null, name = null } = {}) {
   await dbPut("current", parsed);
   // Keep the original file too, so "Download EPUB" works offline and hands over the exact bytes.
   await dbPut("epub", { id: parsed.id, blob: file, name: name || file.name || `${parsed.title}.epub` }).catch(() => {});
-  // Same book (by title) = a newer build: keep the place. A different book starts at the beginning.
-  const same = (state.bookId || "").split("|")[0] === parsed.title;
+  // Same book (by title) = a newer build: keep the place. A different book starts where you left it, or at the
+  // beginning; the place in the book it replaces is kept, so swapping back (even by accident) loses nothing.
+  const prev = (state.bookId || "").split("|")[0];
+  const same = prev === parsed.title;
   state.bookId = parsed.id;
-  if (!same) { state.ch = 0; state.s = 0; state.chKey = null; state.sText = null; }
+  if (!same) {
+    const places = state.places || {};
+    if (prev) places[prev] = { ch: state.ch, s: state.s, chKey: state.chKey, sText: state.sText };
+    Object.assign(state, { ch: 0, s: 0, chKey: null, sText: null }, places[parsed.title]);
+    delete places[parsed.title];
+    state.places = Object.fromEntries(Object.entries(places).slice(-5));
+  }
   saveState();
   showBook(parsed);
 }
@@ -1336,8 +1357,14 @@ async function boot() {
   }
   try {
     const saved = await dbGet("current");
+    const epub = saved && saved.v !== BOOK_VERSION ? await dbGet("epub").catch(() => null) : null;
     if (saved?.v === BOOK_VERSION) showBook(saved);
-    else if (saved) $("emptyMsg").dataset.custom = "1", $("emptyMsg").textContent = "Tachivel was updated to show pictures and arcs. Drop the book in once more; your place is kept.";
+    // Saved by an older Tachivel: read the kept EPUB again (same title, so the place stays).
+    else if (epub && epub.id === saved.id) {
+      showLoading("Updating the book…");
+      await openBook(epub.blob, { cloud: saved.cloud, name: epub.name }).catch(() => {}).finally(hideLoading);
+    }
+    else if (saved)$("emptyMsg").dataset.custom = "1", $("emptyMsg").textContent = "Tachivel was updated to show pictures and arcs. Drop the book in once more; your place is kept.";
   } catch {}
   checkCloud();
 }
