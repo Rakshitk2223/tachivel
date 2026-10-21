@@ -287,10 +287,14 @@ let imageUrls = [];
 const collapsed = new Set();
 const rowOfChapter = (ch) => book.toc.findIndex((r) => r.ch === ch);
 
+// Each arc/book row's last chapter: once you're past it, the whole group is done.
+let groupLast = [];
 function renderChapterList() {
   const ul = $("chapters");
   ul.replaceChildren();
   collapsed.clear();
+  groupLast = [];
+  for (const r of book.toc) if (r.ch != null) for (const a of r.anc) groupLast[a] = Math.max(groupLast[a] ?? -1, r.ch);
   const curRow = rowOfChapter(state.ch);
   book.toc.forEach((r, i) => { if (r.g && r.d > 0 && !book.toc[curRow]?.anc.includes(i) && i !== curRow) collapsed.add(i); });
   rowEls = book.toc.map((r, i) => {
@@ -330,7 +334,7 @@ function markCurrentRow() {
   if (opened) updateRows();
   book.toc.forEach((r, i) => {
     rowEls[i].classList.toggle("cur", i === cur);
-    rowEls[i].classList.toggle("done", r.ch != null && r.ch < state.ch);
+    rowEls[i].classList.toggle("done", r.g ? groupLast[i] < state.ch : r.ch != null && r.ch < state.ch);
   });
   rowEls[cur]?.scrollIntoView({ block: "nearest" });
 }

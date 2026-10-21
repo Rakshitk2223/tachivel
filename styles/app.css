@@ -74,6 +74,7 @@ kbd { font: var(--weight-medium) 11px var(--font-mono); color: var(--text-muted)
 .ch li.hit { color: var(--text); background: var(--surface-2); }
 .ch li.grp { color: var(--text); font-weight: var(--weight-bold); font-size: 13px; padding-top: var(--space-3); opacity: 1; }
 .ch li.grp.top { font-family: var(--font-read); font-weight: var(--weight-medium); font-size: var(--text-md); }
+.ch li.grp.done { color: var(--text-muted); opacity: .6; }
 .caret { display: inline-block; width: 1ch; flex: none; color: var(--text-muted); transition: transform var(--dur-fast) var(--ease); }
 .grp.open .caret { transform: rotate(90deg); }
 .gallery { overflow: auto; flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); padding: var(--space-3) var(--space-4) var(--space-4); align-content: start; }
