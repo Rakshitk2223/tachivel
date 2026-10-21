@@ -1,5 +1,5 @@
 // Tachivel — local EPUB listen-along reader.
-// Book model: { v, id, title, author, chapters: [{ t, p, b: [[kind, n]...], s: [sentence...] }], images: [{ ch, s, alt, cap, blob }], toc: [{ t, d, g, ch, anc }] }
+// Book model: { v, id, title, author, chapters: [{ t, p, b: [[kind, n]...], s: [sentence...] }], images: [{ ch, s, alt, cap, ng, blob }], codex: [{ kind, name, form, text: [para...], img, ch, s }], toc: [{ t, d, g, ch, anc }] }
 "use strict";
 
 const $ = (id) => document.getElementById(id);
@@ -46,9 +46,10 @@ async function dbPut(key, val) {
 
 // ---------- EPUB parsing ----------
 // Bump when the parsed book format changes; older saved books ask for a re-import.
-const BOOK_VERSION = 3;
+const BOOK_VERSION = 4;
 // Block kinds inside a chapter: [kind, n]
 const TEXT = 0, HEAD = 1, IMAGE = 2, BREAK = 3; // TEXT/HEAD: n sentences · IMAGE: n = image index · BREAK: scene divider
+const CODEX = 4; // parse-time only: a World entry, kept in book.codex and never in a chapter's blocks
 const BLOCK = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li", "div", "section", "article", "pre", "td", "dd", "dt", "figure", "figcaption", "header", "footer", "aside", "hr", "table", "ul", "ol"]);
 const HEADING = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
 const SKIP = new Set(["script", "style", "head", "rt", "rp", "math", "nav"]);
@@ -78,8 +79,29 @@ function containsBlock(el) {
   }
   return false;
 }
+const hasClass = (el, c) => (el.getAttribute("class") || "").split(/\s+/).includes(c);
 // Pictures inside class="no-gallery" (front matter, character sheets) show while reading but stay out of the Images tab.
-const noGallery = (el) => (el.getAttribute("class") || "").split(/\s+/).includes("no-gallery");
+const noGallery = (el) => hasClass(el, "no-gallery");
+// A class="codex" block is a World entry (character, place or map): it leaves the text and is never read out.
+// It unlocks where it sits in the book, or at data-from="Chapter 12". Pandoc writes {kind="map"} as data-kind.
+const KINDS = ["character", "place", "map"];
+const attr = (el, k) => el.getAttribute(k) ?? el.getAttribute(`data-${k}`);
+function codexEntry(el, base) {
+  const all = [...el.getElementsByTagName("*")];
+  const img = all.find((d) => /^(img|image)$/i.test(d.localName));
+  const src = img && (img.getAttribute("src") || img.getAttribute("href") || img.getAttributeNS("http://www.w3.org/1999/xlink", "href"));
+  const head = all.find((d) => HEADING.has(d.localName.toLowerCase()));
+  const kind = (attr(el, "kind") || KINDS.find((k) => hasClass(el, k)) || "").toLowerCase();
+  return {
+    kind: KINDS.includes(kind) ? kind : "character",
+    name: clean(attr(el, "name") || head?.textContent || img?.getAttribute("alt") || ""),
+    form: clean(attr(el, "form") || ""),
+    from: clean(attr(el, "from") || ""),
+    src: src ? resolvePath(base, src) : null,
+    alt: clean(img?.getAttribute("alt") || ""),
+    text: all.filter((d) => d.localName.toLowerCase() === "p").map((p) => clean(p.textContent)).filter(Boolean),
+  };
+}
 // Collect a chapter's content in reading order: [TEXT|HEAD, text] | [IMAGE, {src, alt, ng}] | [BREAK]
 function walk(el, out, base, ng = false) {
   ng = ng || noGallery(el);
@@ -95,6 +117,7 @@ function walk(el, out, base, ng = false) {
     if (n.nodeType !== 1) continue;
     const tag = n.localName.toLowerCase();
     if (SKIP.has(tag)) continue;
+    if (hasClass(n, "codex")) { flush(); out.push([CODEX, codexEntry(n, base)]); continue; }
     if (tag === "br") { flush(); continue; }
     if (tag === "hr") { flush(); out.push([BREAK]); continue; }
     if (tag === "img" || tag === "image") {
@@ -207,7 +230,19 @@ async function parseEpub(file, onProgress) {
   const chapters = [];
   const images = [];
   const imageIndex = {};
-  let pending = []; // pictures from picture-only pages, carried into the next chapter
+  const codex = [];
+  let pending = []; // pictures and World entries from pages with nothing to read, carried into the next chapter
+  // One stored copy per picture file; null when it's missing or not a plain picture (e.g. SVG/HTML), which must never become a page-origin blob.
+  async function addImage(key, at, alt, cap, ng) {
+    if (imageIndex[key] == null) {
+      const f = entry(key);
+      const type = f && imageType(key, typeByPath[key]);
+      if (!type) return null;
+      const blob = new Blob([await f.async("arraybuffer")], { type });
+      imageIndex[key] = images.push({ ...at, alt, cap, ng, blob }) - 1;
+    }
+    return imageIndex[key];
+  }
   for (let i = 0; i < spine.length; i++) {
     const item = spine[i];
     if (!/html|xml/.test(item.type)) continue;
@@ -220,22 +255,19 @@ async function parseEpub(file, onProgress) {
     const isCover = /cover/i.test(item.href) || (body.getAttribute("epub:type") || "").includes("cover");
     const hasText = chunks.some((c) => c[0] === TEXT || c[0] === HEAD);
     if (!hasText) {
-      if (!isCover) pending.push(...chunks.filter((c) => c[0] === IMAGE));
+      if (!isCover) pending.push(...chunks.filter((c) => c[0] === IMAGE || c[0] === CODEX));
       continue;
     }
     const b = [], s = [];
     for (const c of [...pending, ...chunks]) {
+      const at = { ch: chapters.length, s: s.length };
       if (c[0] === IMAGE) {
-        const key = c[1].src;
-        if (imageIndex[key] == null) {
-          const f = entry(key);
-          if (!f) continue;
-          const type = imageType(key, typeByPath[key]);
-          if (!type) continue; // not a plain picture (e.g. SVG/HTML): never turn it into a page-origin blob
-          const blob = new Blob([await f.async("arraybuffer")], { type });
-          imageIndex[key] = images.push({ ch: chapters.length, s: s.length, alt: c[1].alt, cap: c[1].cap || "", ng: !!c[1].ng, blob }) - 1;
-        }
-        b.push([IMAGE, imageIndex[key]]);
+        const n = await addImage(c[1].src, at, c[1].alt, c[1].cap || "", !!c[1].ng);
+        if (n != null) b.push([IMAGE, n]);
+      } else if (c[0] === CODEX) {
+        const { src, alt, ...e } = c[1];
+        const img = src ? await addImage(src, at, alt || e.name, "", true) : null;
+        codex.push({ ...e, img, ...at });
       } else if (c[0] === BREAK) {
         if (b.length && b[b.length - 1][0] !== BREAK) b.push([BREAK, 0]);
       } else {
@@ -251,8 +283,23 @@ async function parseEpub(file, onProgress) {
     if (i % 10 === 0) { onProgress(i + 1, spine.length); await new Promise((r) => setTimeout(r)); }
   }
   if (!chapters.length) throw new Error("No readable text found. The book may be DRM-protected or image-only.");
+  // World entries on pages after the last chapter unlock at the very end.
+  const last = chapters[chapters.length - 1];
+  for (const c of pending) {
+    if (c[0] !== CODEX) continue;
+    const { src, alt, ...e } = c[1], at = { ch: chapters.length - 1, s: last.s.length - 1 };
+    codex.push({ ...e, img: src ? await addImage(src, at, alt || e.name, "", true) : null, ...at });
+  }
+  // data-from moves an entry's unlock point to the start of that chapter ("Chapter 12", "12", or an exact title).
+  for (const e of codex) {
+    if (!e.from) continue;
+    const n = /^(?:(?:chapter|ch\.?)\s*)?(\d+)$/i.exec(e.from)?.[1];
+    const i = n ? chapters.findIndex((c) => new RegExp(`^(?:chapter|ch\\.?)\\s*${n}\\b`, "i").test(c.t)) : chapters.findIndex((c) => c.t === e.from);
+    if (i >= 0) Object.assign(e, { ch: i, s: 0 });
+  }
+  codex.sort((a, b) => a.ch - b.ch || a.s - b.s);
   const cover = await coverOf(pkg).catch(() => null);
-  return { v: BOOK_VERSION, id: `${title}|${author}`, title, author, cover, chapters, images, toc: buildRows(toc, chapters) };
+  return { v: BOOK_VERSION, id: `${title}|${author}`, title, author, cover, chapters, images, codex, toc: buildRows(toc, chapters) };
 }
 
 // Merge the table of contents with the chapters actually kept, so every chapter has exactly one row.
@@ -367,7 +414,10 @@ function updateProgress() {
   $("bookMeta").textContent = `${pct}% read, ${left}`;
   $("nowTitle").textContent = ch.t;
   $("pos").textContent = `Sentence ${state.s + 1} of ${ch.s.length}, ${pct}% of the book`;
+  noteFarthest();
+  far = farthest();
   renderGallery(false);
+  renderWorld(false);
   if (state.view === "library") renderLibrary();
 }
 
@@ -407,7 +457,21 @@ function renderChapter() {
 // The Images tab holds no spoilers: only pictures you've already read past, and none marked no-gallery.
 // Pictures are stored in reading order, so the ones reached are always a prefix and a count says what's shown.
 let galleryShown = -1;
-const reached = (im) => im.ch < state.ch || (im.ch === state.ch && im.s <= state.s);
+// "Reached" means the furthest you've read, not where you are now: jumping back to an early picture hides nothing.
+// Kept per book by chapter title, so a new build with extra front matter still lines up.
+function farthest() {
+  const f = state.far?.book === book.title ? state.far : null;
+  let ch = f ? book.chapters.findIndex((c) => c.t === f.chKey) : -1;
+  if (f && ch < 0) ch = Math.min(f.ch, book.chapters.length - 1);
+  const here = { ch: state.ch, s: state.s };
+  return ch < 0 || ch < here.ch || (ch === here.ch && f.s < here.s) ? here : { ch, s: f.s };
+}
+function noteFarthest() {
+  const f = farthest();
+  if (f.ch === state.ch && f.s === state.s) state.far = { book: book.title, chKey: book.chapters[f.ch].t, ch: f.ch, s: f.s };
+}
+let far = { ch: 0, s: 0 };
+const reached = (im) => im.ch < far.ch || (im.ch === far.ch && im.s <= far.s);
 function renderGallery(force = true) {
   const shown = book.images.filter((im) => !im.ng && reached(im)).length;
   if (!force && shown === galleryShown) return;
@@ -430,14 +494,129 @@ function renderGallery(force = true) {
     grid.appendChild(btn);
   });
 }
+// The World tab: characters, places and maps, by the same rule. Looking things up never moves the voice.
+// Entries sharing a name are one card; its forms (e.g. "Grey form") appear as you reach them.
+const KIND_LABEL = { character: "Characters", place: "Places", map: "Maps" };
+const KIND_EMPTY = { character: "characters", place: "places", map: "maps" };
+let worldSeen = null, worldKind = null, worldOpen = null, worldForm = -1;
+function worldGroups() {
+  const groups = new Map();
+  for (const e of book.codex || []) {
+    if (!reached(e)) continue;
+    const key = `${e.kind}|${e.name}`;
+    if (!groups.has(key)) groups.set(key, { key, kind: e.kind, name: e.name, forms: [] });
+    groups.get(key).forms.push(e);
+  }
+  return [...groups.values()];
+}
+function renderWorld(force = true) {
+  const all = book.codex || [];
+  $("tabWorld").hidden = !all.length;
+  const open = all.filter(reached);
+  const fresh = worldSeen ? open.filter((e) => !worldSeen.has(e)) : [];
+  if (!force && !fresh.length && open.length === worldSeen?.size) return;
+  // Met someone new in the last few sentences: say so. A big jump (or opening the book) stays quiet.
+  if (!force && fresh.length && fresh.length <= 3) toast(`New in World: ${[...new Set(fresh.map((e) => (e.form ? `${e.name} (${e.form})` : e.name)))].join(", ")}`);
+  worldSeen = new Set(open);
+  const groups = worldGroups();
+  $("worldCount").textContent = groups.length ? String(groups.length) : "";
+  const kinds = KINDS.filter((k) => groups.some((g) => g.kind === k));
+  if (!kinds.includes(worldKind)) worldKind = kinds[0] || "character";
+  const bar = $("worldKinds");
+  bar.replaceChildren();
+  bar.hidden = kinds.length < 2;
+  for (const k of kinds) {
+    const b = node("button", null, KIND_LABEL[k]);
+    b.type = "button";
+    b.setAttribute("aria-pressed", k === worldKind);
+    b.onclick = () => { worldKind = k; worldOpen = null; renderWorld(); };
+    bar.append(b);
+  }
+  const list = $("worldList");
+  list.replaceChildren();
+  list.className = `wl ${worldKind}`;
+  const shown = groups.filter((g) => g.kind === worldKind);
+  if (!shown.length) list.append(node("li", "gallery-empty", "Characters, places and maps show up here as the story reaches them."));
+  for (const g of shown) {
+    const e = g.forms[g.forms.length - 1];
+    const li = node("li");
+    const b = node("button");
+    b.type = "button";
+    b.append(entryPicture(e, g.name));
+    const words = node("span", "wt");
+    words.append(node("span", "nm", g.name));
+    const sub = [g.forms.length > 1 ? `${g.forms.length} forms` : e.form, e.text[0]].filter(Boolean).join(". ");
+    if (sub && worldKind !== "map") words.append(node("span", "sub", sub));
+    b.append(words);
+    b.onclick = () => { worldOpen = g.key; worldForm = -1; renderWorldDetail(); };
+    li.append(b);
+    list.append(li);
+  }
+  renderWorldDetail();
+}
+function entryPicture(e, name) {
+  if (e.img == null) return node("span", "ph", name.slice(0, 1));
+  const img = node("img");
+  img.src = imageUrls[e.img];
+  img.alt = "";
+  img.loading = "lazy";
+  return img;
+}
+function renderWorldDetail() {
+  const g = worldOpen && worldGroups().find((x) => x.key === worldOpen);
+  const box = $("worldDetail");
+  box.hidden = !g;
+  $("worldList").hidden = !!g;
+  if (!g) { $("worldKinds").hidden = $("worldKinds").childElementCount < 2; return; }
+  $("worldKinds").hidden = true;
+  const e = g.forms[worldForm < 0 ? g.forms.length - 1 : worldForm];
+  box.replaceChildren();
+  const back = node("button", "back");
+  back.type = "button";
+  back.append(svgIcon("M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"), node("span", null, `All ${KIND_EMPTY[g.kind]}`));
+  back.onclick = () => { worldOpen = null; renderWorldDetail(); };
+  box.append(back);
+  if (e.img != null) {
+    const img = node("img", "pic");
+    img.src = imageUrls[e.img];
+    img.alt = e.form ? `${g.name}, ${e.form}` : g.name;
+    img.onclick = () => openViewer(imageUrls[e.img], img.alt);
+    box.append(img);
+  }
+  box.append(node("h3", null, g.name));
+  if (g.forms.length > 1) {
+    const forms = node("div", "kinds");
+    g.forms.forEach((f, i) => {
+      const b = node("button", null, f.form || `Form ${i + 1}`);
+      b.type = "button";
+      b.setAttribute("aria-pressed", f === e);
+      b.onclick = () => { worldForm = i; renderWorldDetail(); };
+      forms.append(b);
+    });
+    box.append(forms);
+  } else if (e.form) box.append(node("p", "form", e.form));
+  for (const t of e.text) box.append(node("p", null, t));
+  const first = g.forms[0];
+  const seen = node("button", "link seen", `First seen in ${book.chapters[first.ch].t}`);
+  seen.type = "button";
+  seen.onclick = () => jump(first.ch, Math.min(first.s, book.chapters[first.ch].s.length - 1));
+  box.append(seen);
+}
+function openViewer(src, alt) {
+  $("viewerImg").src = src;
+  $("viewerImg").alt = alt;
+  $("viewerCap").textContent = alt;
+  $("viewer").showModal();
+}
+
 let tab = "chapters";
+const TABS = { chapters: ["tabCh", "chPane"], images: ["tabImg", "gallery"], world: ["tabWorld", "world"] };
 function showTab(name) {
   tab = name;
-  const imgs = name === "images";
-  $("tabCh").setAttribute("aria-selected", !imgs);
-  $("tabImg").setAttribute("aria-selected", imgs);
-  $("chPane").hidden = imgs;
-  $("gallery").hidden = !imgs;
+  for (const [t, [btn, pane]] of Object.entries(TABS)) {
+    $(btn).setAttribute("aria-selected", t === name);
+    $(pane).hidden = t !== name;
+  }
   applyLayout();
 }
 
@@ -929,7 +1108,10 @@ function showBook(b) {
   state.ch = place.ch;
   state.s = place.s;
   renderChapterList();
+  far = farthest();
   renderGallery();
+  worldSeen = worldOpen = null;
+  renderWorld();
   showTab("chapters");
   sentEls = [];
   shownCh = -1; // force render
@@ -1282,6 +1464,8 @@ function wire() {
   $("goto").oninput = filterChapters;
   $("tabCh").onclick = () => showTab("chapters");
   $("tabImg").onclick = () => showTab("images");
+  $("tabWorld").onclick = () => showTab("world");
+  $("viewer").onclick = () => $("viewer").close();
   $("goto").onkeydown = (e) => {
     if (e.key === "Enter") { e.preventDefault(); gotoSubmit(); }
     if (e.key === "Escape") { $("goto").value = ""; filterChapters(); $("goto").blur(); }

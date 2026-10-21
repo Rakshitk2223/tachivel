@@ -37,6 +37,10 @@ a line. The library hero has no box, just a blurred glow of the cover.
 | A3 Rail, library with hero | [7:258](https://www.figma.com/design/OfphbBo5TU6i8dy6WZomsy?node-id=7-258) |
 | A4 Phone, chapters sheet | [7:340](https://www.figma.com/design/OfphbBo5TU6i8dy6WZomsy?node-id=7-340) |
 | A5 Novels/Comics switch, Comics placeholder | [20:814](https://www.figma.com/design/OfphbBo5TU6i8dy6WZomsy?node-id=20-814) |
+| A6a World tab, Characters | [32:802](https://www.figma.com/design/OfphbBo5TU6i8dy6WZomsy?node-id=32-802) |
+| A6b World tab, character with two forms | [32:870](https://www.figma.com/design/OfphbBo5TU6i8dy6WZomsy?node-id=32-870) |
+| A6c World tab, Maps | [32:902](https://www.figma.com/design/OfphbBo5TU6i8dy6WZomsy?node-id=32-902) |
+| A6d Phone, World sheet | [32:932](https://www.figma.com/design/OfphbBo5TU6i8dy6WZomsy?node-id=32-932) |
 | B1 Stage, reading | [8:366](https://www.figma.com/design/OfphbBo5TU6i8dy6WZomsy?node-id=8-366) |
 | B2 Stage, Navigator search | [8:416](https://www.figma.com/design/OfphbBo5TU6i8dy6WZomsy?node-id=8-416) |
 | B3 Stage, Navigator library | [8:514](https://www.figma.com/design/OfphbBo5TU6i8dy6WZomsy?node-id=8-514) |

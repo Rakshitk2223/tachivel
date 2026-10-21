@@ -48,6 +48,7 @@
     <div class="tabs" role="tablist">
       <button type="button" role="tab" id="tabCh" aria-selected="true">Chapters</button>
       <button type="button" role="tab" id="tabImg" aria-selected="false" hidden>Images <span class="count" id="imgCount"></span></button>
+      <button type="button" role="tab" id="tabWorld" aria-selected="false" hidden>World <span class="count" id="worldCount"></span></button>
     </div>
     <div class="pane" id="chPane">
       <label class="goto">
@@ -59,6 +60,11 @@
       <ul class="ch" id="chapters"></ul>
     </div>
     <div class="gallery" id="gallery" hidden></div>
+    <div class="world" id="world" hidden>
+      <div class="kinds" id="worldKinds" role="group" aria-label="Show"></div>
+      <ul class="wl" id="worldList"></ul>
+      <div class="wd" id="worldDetail" hidden></div>
+    </div>
     <input id="file" type="file" accept=".epub,application/epub+zip" hidden>
   </aside>
 
@@ -205,6 +211,11 @@
   </form>
   <div class="search-count" id="qCount"></div>
   <ul class="results" id="results"></ul>
+</dialog>
+
+<dialog id="viewer" class="viewer" aria-label="Picture">
+  <img id="viewerImg" alt="">
+  <p id="viewerCap"></p>
 </dialog>
 
 <dialog id="accountDlg" class="sync" aria-labelledby="accountTitle">
