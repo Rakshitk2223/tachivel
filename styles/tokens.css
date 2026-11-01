@@ -66,3 +66,63 @@
   --elev-2: 0 8px 24px rgb(60 40 20 / .15);
   --elev-3: 0 24px 64px rgb(60 40 20 / .25);
 }
+
+/* Snow — cool white, kind to manga pages in daylight */
+[data-theme="snow"] {
+  color-scheme: light;
+  --bg: #f7f8fa;
+  --surface: #eef0f4;
+  --surface-2: #e3e7ee;
+  --border: #d5dbe5;
+  --text: #161b24;
+  --text-muted: #5b6577;
+  --accent: #2f6fde;
+  --accent-contrast: #ffffff;
+  --word: #1d4ed8;
+  --success: #2f8f5b; --warning: #b7791f; --danger: #c2413a;
+  --elev-2: 0 8px 24px rgb(20 30 50 / .12);
+  --elev-3: 0 24px 64px rgb(20 30 50 / .2);
+}
+
+/* Midnight — blue-black with a cool accent */
+[data-theme="midnight"] {
+  color-scheme: dark;
+  --bg: #0b1020;
+  --surface: #080c18;
+  --surface-2: #18213a;
+  --border: #222c47;
+  --text: #dde4f3;
+  --text-muted: #8e9ab5;
+  --accent: #7aa2ff;
+  --accent-contrast: #0a1022;
+  --word: #b9cdff;
+  --success: #6cc79a; --warning: #e6b15a; --danger: #f07178;
+}
+
+/* Moss — green-black, quiet */
+[data-theme="moss"] {
+  color-scheme: dark;
+  --bg: #11150f;
+  --surface: #0c0f0a;
+  --surface-2: #1f271b;
+  --border: #283223;
+  --text: #e4e8d9;
+  --text-muted: #9aa38d;
+  --accent: #a8c66c;
+  --accent-contrast: #11160a;
+  --word: #d6ec9f;
+}
+
+/* Plum — violet-black */
+[data-theme="plum"] {
+  color-scheme: dark;
+  --bg: #161018;
+  --surface: #100b12;
+  --surface-2: #2a1e2e;
+  --border: #33263a;
+  --text: #efe3f2;
+  --text-muted: #a593ab;
+  --accent: #c98ae6;
+  --accent-contrast: #1a0d20;
+  --word: #f0c2ff;
+}
