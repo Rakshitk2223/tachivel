@@ -343,3 +343,17 @@ dialog::backdrop { background: rgb(0 0 0 / .55); }
 /* Keyboard hints mean nothing on a touch screen */
 @media (pointer: coarse) { .goto kbd, .pop-search kbd { display: none; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* v2: phones have no rail, so a visible way back to the library (and from there, Comics). */
+.home-link { display: none; }
+@media (max-width: 800px) {
+  .home-link {
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    position: fixed; z-index: 30; top: calc(env(safe-area-inset-top) + var(--space-2)); left: var(--space-3);
+    padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2); border-radius: var(--radius-full);
+    background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    color: var(--text); font: var(--weight-medium) var(--text-sm)/1 var(--font-ui); text-decoration: none; box-shadow: var(--elev-1);
+  }
+  .home-link svg { width: 18px; height: 18px; fill: currentColor; }
+  .main { padding-top: calc(env(safe-area-inset-top) + 44px); }
+}

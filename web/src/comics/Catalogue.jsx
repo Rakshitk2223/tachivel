@@ -91,7 +91,7 @@ export default function Catalogue() {
           <Icon name="search" size={16} className="muted" /><input placeholder={`Search ${s?.displayName || ""}`} value={query} onChange={(e) => setQuery(e.target.value)} enterKeyHint="search" />
         </form>
       </div>
-      <div className="series" style={{ gridTemplateColumns: "1fr 320px" }}>
+      <div className="split split-side">
         <div style={{ display: "grid", gap: 20 }}>
           <ErrorNote error={error} onRetry={() => load(page)} />
           <div className="grid">

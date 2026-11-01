@@ -8,7 +8,10 @@ import { useGql, useComicPrefs } from "./data.js";
 
 const LANG = new Intl.DisplayNames(undefined, { type: "language" });
 export const langName = (l) => (l === "all" ? "Multi-language" : l === "localsourcelang" ? "On your server" : (() => { try { return LANG.of(l); } catch { return l; } })());
-export const SourceIcon = ({ src, name }) => (src ? <img src={media(src)} alt="" loading="lazy" /> : name.slice(0, 2).toUpperCase());
+export function SourceIcon({ src, name }) {
+  const [ok, setOk] = useState(true);
+  return src && ok ? <img src={media(src)} alt="" loading="lazy" onError={() => setOk(false)} /> : name.slice(0, 2).toUpperCase();
+}
 export const shownLang = (prefs, lang) => prefs.langs.includes(lang) || lang === "localsourcelang";
 // Adult-only sources stay hidden unless you turn them on in Settings → Browse (mixed ones, like MangaDex, always show).
 export const shown = (prefs, x) => shownLang(prefs, x.lang) && (prefs.adult || x.contentWarning !== "NSFW");
@@ -50,7 +53,7 @@ function Sources() {
   const pinMenu = (s) => (e) => { e.preventDefault(); setMenu({ at: { x: e.clientX, y: e.clientY }, s }); };
   if (src.loading && !src.data) return <Spinner />;
   return (
-    <div className="two-col" style={{ gridTemplateColumns: "minmax(0, 720px) minmax(0, 380px)" }}>
+    <div className="split split-side">
       <div className="list">
         <ErrorNote error={src.error} onRetry={src.reload} />
         {!all.length && <Empty icon="extensions" title="No sources yet" action={<Button kind="accent" icon="extensions" onClick={() => nav("/comics/browse/extensions")}>Install extensions</Button>}>Sources come from extensions. Add a repository and install the ones you use.</Empty>}
@@ -97,7 +100,7 @@ function Extensions({ filter }) {
     button={busy[e.pkgName] ? "Working…" : button} buttonKind={accent ? "accent" : "outline"} onButton={() => !busy[e.pkgName] && act(e, patch)} />;
   const addRepo = async () => { const url = prompt("Repository index URL (ends in index.min.json)"); if (url) { await gql(M.addStore, { url }).catch((e) => alert(e.message)); stores.reload(); gql(M.fetchExtensions).then(() => ext.reload()); } };
   return (
-    <div className="two-col" style={{ gridTemplateColumns: "minmax(0, 760px) minmax(0, 360px)" }}>
+    <div className="split split-side">
       <div className="list">
         <ErrorNote error={ext.error} onRetry={ext.reload} />
         {ext.loading && !ext.data && <Spinner />}
@@ -127,7 +130,7 @@ function MigrateList() {
   if (!mangas.length) return <Empty icon="migrate" title="Nothing to migrate">Series in your library show up here, grouped by source.</Empty>;
   const current = bySource.find(([k]) => k === source)?.[1];
   return (
-    <div className="two-col" style={{ gridTemplateColumns: "minmax(0, 380px) minmax(0, 1fr)" }}>
+    <div className="split split-list">
       <div className="list">
         <Caps>Sources in your library</Caps>
         {bySource.map(([k, g]) => <Row key={k} mono={g.name.slice(0, 2).toUpperCase()} title={g.name} sub={`${g.list.length} series`} chevron selected={k === source} onClick={() => setSource(k)} />)}

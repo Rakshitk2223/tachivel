@@ -48,6 +48,8 @@ Personal listen-along EPUB reader. The browser's speech engine reads the book al
 - The bookmark is last-write-wins on `at`, so a device that is behind never drags you backwards.
 
 ## Gotchas
+- **Grid columns must be `minmax(0, 1fr)`, never a bare `1fr`.** A bare `1fr` grows to its widest content (a long repo URL), and on iPhone that widens the whole page so everything overlaps. Keep layout columns in CSS, not inline `style`, so the phone media queries can stack them.
+- **Phone checks:** on this Mac the Playwright window won't go below ~535 px, so "resize to 428" silently isn't 428. Test inside a 428×926 `<iframe>` (check `innerWidth` is 428), and test **every** route, not a sample.
 - **On this office Mac, Zscaler breaks Suwayomi's HTTPS to sources and extension icons** (PKIX errors). Test comics against generated local-source series; real sources only work on the Oracle box.
 - Suwayomi's download mutations block for up to 30 s while the queue changes. Fire them, then poll `downloadStatus`.
 - React inline `<style>` tags are blocked by the CSP. Set styles from React (`style={}`); that goes through CSSOM and is allowed.

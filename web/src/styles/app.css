@@ -22,7 +22,8 @@ p { margin: 0; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
 /* ---------- Shell ---------- */
-.shell { display: grid; grid-template-columns: 64px 1fr; height: 100%; }
+/* minmax(0, 1fr), not 1fr: a plain 1fr column grows to its widest content (a long URL) and pushes the page off-screen. */
+.shell { display: grid; grid-template-columns: 64px minmax(0, 1fr); height: 100%; }
 .rail {
   display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
   padding: var(--space-4) 0 var(--space-4); background: var(--surface); height: 100%; position: sticky; top: 0;
@@ -174,7 +175,7 @@ dialog.sheet.wide .sheet-body { width: min(820px, calc(100vw - 32px)); }
 .filecard { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--surface-2); }
 
 /* Comics: series page */
-.series { display: grid; grid-template-columns: 320px 1fr; gap: var(--space-7); align-items: start; }
+.series { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: var(--space-7); align-items: start; }
 .series-about { display: flex; flex-direction: column; gap: var(--space-4); position: sticky; top: var(--space-7); }
 .series-about .cover { width: 220px; box-shadow: var(--elev-3); }
 .series-about h1 { font-size: var(--text-2xl); }
@@ -213,7 +214,7 @@ dialog.sheet.wide .sheet-body { width: min(820px, calc(100vw - 32px)); }
 .chapter-end { display: grid; justify-items: center; gap: var(--space-3); padding: var(--space-8) var(--space-5); text-align: center; color: var(--text-muted); }
 
 /* Settings */
-.settings { display: grid; grid-template-columns: 260px 1fr; height: 100%; }
+.settings { display: grid; grid-template-columns: 260px minmax(0, 1fr); height: 100%; }
 .settings-nav { background: var(--surface); padding: var(--space-7) var(--space-4); display: flex; flex-direction: column; gap: var(--space-1); overflow: auto; }
 .settings-nav h1 { margin: 0 var(--space-4) var(--space-4); }
 .settings-body { padding: var(--space-7); display: flex; flex-direction: column; gap: var(--space-5); overflow: auto; max-width: 1100px; }
@@ -229,7 +230,7 @@ dialog.sheet.wide .sheet-body { width: min(820px, calc(100vw - 32px)); }
 .sw em { height: 5px; border-radius: 3px; background: var(--text-muted); }
 .sw em:nth-of-type(2) { width: 80%; }
 .sw u { margin-top: auto; height: 12px; width: 40%; border-radius: 6px; background: var(--accent); }
-.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); align-items: start; }
+.two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-5); align-items: start; }
 .seg-row { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-3) var(--space-4); }
 .seg-row .row-text { flex: 1; }
 .seg-row .seg { width: min(360px, 55%); }
@@ -237,15 +238,15 @@ dialog.sheet.wide .sheet-body { width: min(820px, calc(100vw - 32px)); }
 /* ---------- iPad portrait and narrower ---------- */
 @media (max-width: 1100px) {
   .page { padding: var(--space-6); }
-  .series { grid-template-columns: 260px 1fr; gap: var(--space-5); }
+  .series { grid-template-columns: 260px minmax(0, 1fr); gap: var(--space-5); }
   .series-about .cover { width: 180px; }
-  .two-col { grid-template-columns: 1fr; }
-  .settings { grid-template-columns: 220px 1fr; }
+  .two-col { grid-template-columns: minmax(0, 1fr); }
+  .settings { grid-template-columns: 220px minmax(0, 1fr); }
 }
 
 /* ---------- iPhone ---------- */
 @media (max-width: 700px) {
-  .shell { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
   .rail { display: none; }
   .main { padding-top: env(safe-area-inset-top); }
   .page { padding: var(--space-5) var(--space-4) var(--space-6); gap: var(--space-4); }
@@ -257,7 +258,7 @@ dialog.sheet.wide .sheet-body { width: min(820px, calc(100vw - 32px)); }
   .hero { flex-direction: column; align-items: flex-start; padding: 0; gap: var(--space-4); }
   .hero .cover { width: 120px; }
   .hero-title { font-size: var(--text-2xl); }
-  .series { grid-template-columns: 1fr; }
+  .series { grid-template-columns: minmax(0, 1fr); }
   .series-about { position: static; }
   .series-about .cover { width: 110px; }
   .series-head { display: flex; gap: var(--space-4); align-items: flex-start; }
@@ -265,11 +266,11 @@ dialog.sheet.wide .sheet-body { width: min(820px, calc(100vw - 32px)); }
   dialog.sheet { margin: auto 0 0; width: 100%; }
   dialog.sheet.wide .sheet-body { width: 100vw; }
   .grab { display: block; width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 0 auto; }
-  .settings { grid-template-columns: 1fr; }
+  .settings { grid-template-columns: minmax(0, 1fr); }
   .settings.has-section .settings-nav { display: none; }
   .settings:not(.has-section) .settings-body { display: none; }
   .settings-body, .settings-nav { padding: var(--space-5) var(--space-4); }
-  .swatches { grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
+  .swatches { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
   .seg-row { flex-direction: column; align-items: stretch; }
   .seg-row .seg { width: 100%; }
   .srow .row-text .bar { width: 140px; }
@@ -295,3 +296,22 @@ dialog.sheet.wide .sheet-body { width: min(820px, calc(100vw - 32px)); }
 .hscroll { display: grid; grid-auto-flow: column; grid-auto-columns: 128px; gap: var(--space-4); overflow-x: auto; padding-bottom: var(--space-2); scroll-snap-type: x proximity; }
 .hscroll > * { scroll-snap-align: start; }
 @media (max-width: 700px) { .hscroll { grid-auto-columns: 104px; gap: var(--space-3); } }
+
+/* Two-pane layouts (Browse, catalogue). Columns live here, not inline, so the phone rule below can stack them. */
+.split { display: grid; gap: var(--space-6); align-items: start; }
+.split > * { min-width: 0; }
+.split-side { grid-template-columns: minmax(0, 1fr) 340px; }
+.split-list { grid-template-columns: minmax(0, 360px) minmax(0, 1fr); }
+@media (max-width: 1000px) { .split-side, .split-list { grid-template-columns: minmax(0, 1fr); } }
+/* Long names and versions wrap instead of pushing buttons off-screen. */
+.row-title, .row-sub { overflow-wrap: anywhere; }
+.row .btn { flex: 0 0 auto; }
+@media (max-width: 700px) {
+  .row { padding: var(--space-3) var(--space-2); gap: var(--space-3); }
+  .group { padding: var(--space-2); }
+  .page-head .search { width: 100% !important; flex: 1 1 100%; }
+}
+@media (max-width: 700px) { .chips:has(.search) { flex-wrap: wrap; } .chips .search { width: 100% !important; flex: 1 0 100%; } }
+.note > span { overflow-wrap: anywhere; min-width: 0; }
+@media (max-width: 700px) { .note { flex-wrap: wrap; } }
+.page, .group, .list, .settings-body { min-width: 0; }

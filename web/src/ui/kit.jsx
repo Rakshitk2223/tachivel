@@ -82,7 +82,10 @@ export function Empty({ icon = "info", title, children, action }) {
 }
 export function ErrorNote({ error, onRetry }) {
   if (!error) return null;
-  return <div className="note warn" role="alert"><Icon name="alert" size={18} /><span>{error.message || String(error)}</span>{onRetry && <Button small onClick={onRetry}>Try again</Button>}</div>;
+  // Server errors can be a whole Java stack trace: show the first line, briefly, in plain words.
+  const raw = (error.message || String(error)).split("\n")[0].replace(/^Exception while fetching data \([^)]*\)\s*:\s*/, "");
+  const msg = /PKIX|certificate|SSL/i.test(raw) ? "The source couldn't be reached securely from the server." : /403|cloudflare|captcha/i.test(raw) ? "The source is blocking requests right now (bot check). Try again in a bit." : raw.slice(0, 160);
+  return <div className="note warn" role="alert"><Icon name="alert" size={18} /><span>{msg}</span>{onRetry && <Button small onClick={onRetry}>Try again</Button>}</div>;
 }
 
 // A bottom sheet on phones, a centred dialog on wider screens.
