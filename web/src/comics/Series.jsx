@@ -191,7 +191,7 @@ export default function Series() {
 function Chapter({ c, q, sel, source, onOpen, onSelect, onMenu, onDownload }) {
   const st = chapterStatus(c, q);
   const timer = useRef(null), held = useRef(false);
-  const progress = !c.isRead && c.lastPageRead > 0 && c.pageCount > 0 ? ` · page ${c.lastPageRead + 1} of ${c.pageCount}` : "";
+  const progress = !c.isRead && c.lastPageRead > 0 && c.pageCount > 0 ? `page ${c.lastPageRead + 1} of ${c.pageCount}` : "";
   const isSel = sel?.has(c.id);
   return (
     <div className={`chapter${isSel ? " sel" : ""}${c.isRead ? " read" : ""}`}
@@ -201,7 +201,7 @@ function Chapter({ c, q, sel, source, onOpen, onSelect, onMenu, onDownload }) {
       {sel && <span className={`check${isSel ? " on" : ""}`} aria-hidden>{isSel && <Icon name="check" size={14} />}</span>}
       <button type="button" className="chapter-hit" onClick={() => { if (held.current) { held.current = false; return; } onOpen(); }}>
         <span className="row-title">{c.isBookmarked && <Icon name="bookmark" size={14} className="accent" />} {chapterLabel(c)}</span>
-        <span className="row-sub">{[c.scanlator || source, timeAgo(c.uploadDate)].filter(Boolean).join(" · ")}{progress}</span>
+        <span className="row-sub">{[c.scanlator || source, timeAgo(c.uploadDate)].filter(Boolean).join(" · ")}{progress && <> · <span className="accent">{progress}</span></>}</span>
       </button>
       <button type="button" className={`status ${st.tone}`} onClick={!c.isDownloaded && !q ? onDownload : undefined} aria-label={st.label} title={st.label}>
         <span className="hide-phone">{st.label === "Not downloaded" ? "" : st.label}</span><span className="only-phone">{st.short}</span><Icon name={st.icon} size={18} />

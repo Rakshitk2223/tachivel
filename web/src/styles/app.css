@@ -516,3 +516,7 @@ button, a, label, .chip, .seg button { touch-action: manipulation; }            
 .prefs .row { padding-top: var(--space-3); padding-bottom: var(--space-3); }
 @media (max-width: 700px) { .settings.has-section .settings-body { padding-top: calc(env(safe-area-inset-top) + var(--space-4)); } }
 .group-select { display: inline-flex; align-items: center; gap: var(--space-2); }
+/* Read vs unread, like Mihon: unread is bold and full strength, read fades back, so progress shows at a glance. */
+.chapter .row-title, .srow.unread .row-title { font-weight: var(--weight-bold); color: var(--text); }
+.chapter.read .row-title, .srow.read .row-title { font-weight: var(--weight-regular); }
+.chapter.read .chapter-hit, .srow.read .row-text, .srow.read .thumb { opacity: .42; }

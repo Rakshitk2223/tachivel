@@ -35,10 +35,10 @@ export default function Updates() {
               {g.items.map((c) => {
                 const st = chapterStatus(c, dl.byChapter[c.id]);
                 return (
-                  <div key={c.id} className="srow">
+                  <div key={c.id} className={`srow ${c.isRead ? "read" : "unread"}`}>
                     <button type="button" style={{ display: "contents" }} onClick={() => nav(`/comics/series/${c.manga.id}`)}><Thumb src={c.manga.thumbnailUrl} title={c.manga.title} /></button>
                     <button type="button" className="row-text" style={{ textAlign: "left" }} onClick={() => nav(`/comics/read/${c.id}`)}>
-                      <span className={`row-title${c.isRead ? " muted" : ""}`}>{c.manga.title}</span>
+                      <span className="row-title">{c.manga.title}</span>
                       <span className="row-sub">{chapterLabel(c)} · {c.manga.source?.displayName}</span>
                     </button>
                     <button type="button" className={`status ${st.tone}`} title={st.label} onClick={() => !c.isDownloaded && !dl.byChapter[c.id] && enqueue([c.id])}>
