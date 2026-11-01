@@ -17,6 +17,9 @@ services:
     environment:
       UPLOAD_TOKEN: ${UPLOAD_TOKEN:?set UPLOAD_TOKEN in deploy/.env}
       PROXY_SECRET: ${PROXY_SECRET:?set PROXY_SECRET in deploy/.env (same value Caddy sends)}
+      # The novel's weekly build reaches Netlify from the office laptop; the app copies it here (deploy/add-netlify-mirror.sh).
+      NETLIFY_SITE: https://tachivel.netlify.app
+      NETLIFY_PASSPHRASE: ${NETLIFY_PASSPHRASE:-}
     networks: [app]
     volumes:
       - /srv/tachivel/app:/data

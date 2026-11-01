@@ -3,6 +3,7 @@
 //   PUBLIC_DIR    the built web app (default ../web/dist)
 //   UPLOAD_TOKEN  bearer token for POST /api/upload (scripted EPUB pushes)
 //   PROXY_SECRET  shared secret Caddy adds to every request; without it, identity headers are ignored
+//   NETLIFY_SITE, NETLIFY_PASSPHRASE  optional: mirror the novel from the v1 Netlify site (see mirror.mjs)
 //   DEV_USER      local development only: pretend this user is signed in
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
@@ -10,6 +11,7 @@ import { extname, join, normalize, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { fileStore } from "./store.mjs";
 import { handle, trustedUser } from "./core.mjs";
+import { startNetlifyMirror } from "./mirror.mjs";
 
 const PORT = Number(process.env.PORT || 8080);
 const store = fileStore(resolve(process.env.DATA_DIR || "./data"));
@@ -45,6 +47,18 @@ async function serveStatic(req, res, pathname) {
     res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream", "cache-control": cache, ...SECURITY });
     res.end(body);
   } catch { res.writeHead(404, SECURITY); res.end("Not found"); }
+}
+
+// Same path as a scripted token upload: a same-title book is replaced in place, so your place is kept.
+async function uploadLocal(bytes, name) {
+  const r = await handle(new Request(`http://local/api/upload?name=${encodeURIComponent(name)}`, { method: "POST", headers: { authorization: `Bearer ${process.env.UPLOAD_TOKEN}` }, body: bytes }),
+    { store, uploadToken: process.env.UPLOAD_TOKEN, proxySecret: PROXY_SECRET, notify });
+  const body = await r.json();
+  if (!r.ok) throw new Error(body.error || `upload ${r.status}`);
+  return body;
+}
+if (process.env.NETLIFY_SITE && process.env.NETLIFY_PASSPHRASE && process.env.UPLOAD_TOKEN) {
+  startNetlifyMirror({ site: process.env.NETLIFY_SITE.replace(/\/+$/, ""), passphrase: process.env.NETLIFY_PASSPHRASE, dataDir: store.root, upload: uploadLocal });
 }
 
 createServer(async (req, res) => {

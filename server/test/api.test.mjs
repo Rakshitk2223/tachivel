@@ -184,3 +184,30 @@ test("with a proxy secret set, the identity header alone is not enough", async (
   assert.equal((await call({ "remote-user": "rakshit", "x-tachivel-proxy": "caddy-only" })).status, 200);
   await rm(dir, { recursive: true, force: true });
 });
+
+test("the Netlify mirror fetches a new build once, files it as a newer copy, and signs in again when the session expires", async () => {
+  const { startNetlifyMirror } = await import("../src/mirror.mjs");
+  const dir = await mkdtemp(join(tmpdir(), "mirror-"));
+  const book = epub("I Shall Pursue Eternity", "Rakshit Kumar", "build 1");
+  let upload = "u1", logins = 0, sessionValid = true;
+  const fake = async (url, init = {}) => {
+    const path = new URL(url).pathname;
+    if (path === "/api/login") { logins++; sessionValid = true; return new Response("{}", { headers: { "set-cookie": "tv_session=ok; Path=/" } }); }
+    if (!sessionValid || init.headers?.cookie !== "tv_session=ok") return new Response("{}", { status: 401 });
+    if (path === "/api/book") return Response.json({ upload, parts: 2, name: "ISPE.epub" });
+    const i = Number(path.split("/").pop()), half = Math.ceil(book.length / 2);
+    return new Response(i === 0 ? book.slice(0, half) : book.slice(half));
+  };
+  const got = [];
+  const m = startNetlifyMirror({ site: "https://netlify.test", passphrase: "p", dataDir: dir, fetchImpl: fake, log: () => {}, intervalMs: 1e9,
+    upload: async (bytes, name) => { got.push({ bytes, name }); return { book: { id: "b1", title: "I Shall Pursue Eternity" }, replaced: got.length > 1 }; } });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(got.length, 1);
+  assert.deepEqual(got[0].bytes, book, "parts are stitched back into the exact file");
+  assert.equal(await m.check(), "same", "the same Netlify upload isn't fetched twice");
+  upload = "u2"; sessionValid = false;
+  assert.equal(await m.check(), "updated");
+  assert.equal(logins, 2, "an expired session means exactly one fresh sign-in");
+  m.stop();
+  await rm(dir, { recursive: true, force: true });
+});

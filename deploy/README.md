@@ -20,6 +20,10 @@ Cost: $0. Everything here runs on the Always Free A1 server you already have. It
    - `bash /srv/apps/tachivel/deploy/init-env.sh`
    - `bash /srv/apps/tachivel/deploy/deploy.sh`
 
+## Novel mirror from Netlify
+The office laptop can only reach `tachivel.netlify.app`, so the weekly ISPE build is pushed there. The app here checks Netlify every 15 minutes and files each new build on its own shelf as a newer copy, so your place is kept. Reading places are not synced between the two sites.
+Turn it on once with `bash /srv/apps/tachivel/deploy/add-netlify-mirror.sh`. It asks for the v1 passphrase.
+
 ## Later deploys
 `bash /srv/apps/tachivel/deploy/deploy.sh`
 
