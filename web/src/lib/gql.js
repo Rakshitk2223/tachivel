@@ -37,8 +37,8 @@ export const CHAPTER = `id name chapterNumber scanlator uploadDate isRead isBook
 export const Q = {
   categories: `{ categories(order: [{ by: ORDER }]) { nodes { id name order default mangas { totalCount } } } }`,
   library: `query($cat: Int!) { mangas(condition: { inLibrary: true, categoryIds: [$cat] }, order: [{ by: TITLE }]) { nodes { ${MANGA_CARD} } } }`,
-  libraryAll: `{ mangas(condition: { inLibrary: true }, order: [{ by: TITLE }]) { nodes { ${MANGA_CARD} categories { nodes { id } } } } }`,
-  manga: `query($id: Int!) { manga(id: $id) { ${MANGA_CARD} author artist description genre realUrl url
+  libraryAll: `{ mangas(condition: { inLibrary: true }, order: [{ by: TITLE }]) { nodes { ${MANGA_CARD} inLibraryAt bookmarkCount chapters { totalCount } firstUnreadChapter { id } categories { nodes { id } } } } }`,
+  manga: `query($id: Int!) { manga(id: $id) { ${MANGA_CARD} author artist description genre realUrl url chaptersLastFetchedAt
     categories { nodes { id name } } chapters { totalCount }
     trackRecords { nodes { id trackerId title lastChapterRead status } } } }`,
   chapter: `query($id: Int!) { chapter(id: $id) { ${CHAPTER} mangaId manga { id title realUrl source { displayName } } } }`,
@@ -57,7 +57,7 @@ export const Q = {
     ... on GroupFilter { name filters { __typename ... on CheckBoxFilter { name cbDefault: default } ... on TriStateFilter { name tsDefault: default } } } } } }`,
   extensions: `{ extensions(order: [{ by: NAME }]) { nodes { pkgName name lang versionName iconUrl isInstalled hasUpdate isObsolete contentWarning } } }`,
   extensionStores: `{ extensionStores { nodes { indexUrl name } } }`,
-  settings: `{ settings { autoDownloadNewChapters autoDownloadNewChaptersLimit autoDownloadIgnoreReUploads excludeCompleted excludeNotStarted excludeUnreadChapters
+  settings: `{ settings { excludeCompleted excludeNotStarted excludeUnreadChapters excludeEntryWithUnreadChapters autoDownloadNewChapters autoDownloadNewChaptersLimit autoDownloadIgnoreReUploads excludeCompleted excludeNotStarted excludeUnreadChapters
     excludeEntryWithUnreadChapters globalUpdateInterval updateMangas downloadAsCbz backupInterval backupTTL backupTime
     flareSolverrEnabled flareSolverrUrl flareSolverrTimeout flareSolverrSessionTtl flareSolverrAsResponseFallback maxSourcesInParallel } }`,
   about: `{ aboutServer { name version buildType } }`,

@@ -1,6 +1,6 @@
 // A source's catalogue (Figma L2 / I3, phone M2 / M3): Popular, Latest, search, and the source's own filters.
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { gql, Q, M } from "../lib/gql.js";
 import { Button, Chip, ComicCard, Empty, ErrorNote, IconButton, Row, Segmented, Sheet, Spinner } from "../ui/kit.jsx";
 import { Icon } from "../ui/icons.jsx";
@@ -40,8 +40,10 @@ export default function Catalogue() {
   const nav = useNavigate();
   const src = useGql(Q.source, { id }, [id]);
   const [type, setType] = useState("POPULAR");
-  const [query, setQuery] = useState("");
-  const [submitted, setSubmitted] = useState("");
+  const [params] = useSearchParams();
+  // A tapped genre arrives as ?q=, and opens straight into that search.
+  const [query, setQuery] = useState(params.get("q") || "");
+  const [submitted, setSubmitted] = useState(params.get("q") || "");
   const [fstate, setFstate] = useState(null);
   const [applied, setApplied] = useState([]);
   const [items, setItems] = useState([]);

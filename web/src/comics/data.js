@@ -3,7 +3,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { gql, Q } from "../lib/gql.js";
 import { useLoad } from "../lib/api.js";
 
-export const useGql = (query, vars = {}, deps = []) => useLoad(() => gql(query, vars), deps);
+// Cached by query + variables, so revisiting a screen paints instantly while it refreshes.
+export const useGql = (query, vars = {}, deps = []) => useLoad(() => gql(query, vars), deps, `gql:${query.length}:${hash(query)}:${JSON.stringify(vars)}`);
+function hash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h.toString(36); }
 
 // The download queue, polled while anything is in it (and every 15 s otherwise, to notice new work).
 export function useDownloads() {
@@ -31,7 +33,8 @@ export function chapterStatus(ch, q) {
 const KEY = "tachivel:comics";
 const read = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } };
 export function useComicPrefs() {
-  const [prefs, set] = useState(() => ({ layout: "covers", sort: "latest", filter: {}, badges: { unread: true, downloaded: true }, langs: ["en", "all", "localsourcelang"], pinned: [], incognito: false, saveAhead: 3, adult: false, ...read() }));
+  const [prefs, set] = useState(() => migrate({ layout: "comfortable", cols: { phone: 3, wide: 0 }, sort: "latest", desc: true, filter: {}, tabs: { show: true, counts: true }, continueBtn: true, badges: { unread: true, downloaded: true, source: true }, langs: ["en", "all", "localsourcelang"], pinned: [], incognito: false, saveAhead: 3, adult: false, ...read() }));
+  function migrate(p) { return p.layout === "covers" ? { ...p, layout: "comfortable" } : p; } // the old default's name
   const update = useCallback((patch) => set((p) => { const n = { ...p, ...patch }; try { localStorage.setItem(KEY, JSON.stringify(n)); } catch {} return n; }), []);
   return [prefs, update];
 }

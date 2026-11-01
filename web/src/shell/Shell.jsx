@@ -1,4 +1,5 @@
 // Layout: a left rail on laptop and iPad, a bottom tab bar on iPhone (Library · Updates · History · Browse · More).
+import { useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Icon } from "../ui/icons.jsx";
 
@@ -70,11 +71,32 @@ function TabBar() {
   );
 }
 
+// Pull down from the top of any screen to reload it (an installed iPhone web app has no reload gesture of its own).
+function usePullToRefresh() {
+  const [pull, setPull] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const start = useRef(null);
+  const main = useRef(null);
+  const handlers = {
+    onTouchStart: (e) => { start.current = main.current?.scrollTop <= 0 && !busy ? e.touches[0].clientY : null; },
+    onTouchMove: (e) => { if (start.current == null) return; const dy = e.touches[0].clientY - start.current; setPull(dy > 0 ? Math.min(90, dy * 0.5) : 0); },
+    onTouchEnd: () => {
+      if (pull > 60) { setBusy(true); dispatchEvent(new Event("tachivel:pull")); setTimeout(() => setBusy(false), 900); }
+      start.current = null; setPull(0);
+    },
+  };
+  return { main, handlers, pull, busy };
+}
+
 export default function Shell() {
+  const { main, handlers, pull, busy } = usePullToRefresh();
   return (
     <div className="shell">
       <Rail />
-      <main className="main"><Outlet /></main>
+      <main className="main" ref={main} {...handlers}>
+        {(pull > 0 || busy) && <div className={`ptr${pull > 60 || busy ? " ready" : ""}${busy ? " busy" : ""}`} style={{ height: busy ? 48 : pull }} aria-hidden><Icon name="refresh" size={20} /></div>}
+        <Outlet />
+      </main>
       <TabBar />
     </div>
   );

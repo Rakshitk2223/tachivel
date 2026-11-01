@@ -97,14 +97,14 @@ function Extensions({ filter }) {
   const updates = all.filter((e) => e.hasUpdate), installed = all.filter((e) => e.isInstalled && !e.hasUpdate), available = all.filter((e) => !e.isInstalled && shown(prefs, e));
   const act = async (e, patch) => { setBusy((b) => ({ ...b, [e.pkgName]: true })); try { await gql(M.updateExtension, { id: e.pkgName, patch }); } catch (err) { alert(err.message); } finally { setBusy((b) => ({ ...b, [e.pkgName]: false })); ext.reload(); } };
   const row = (e, button, patch, accent) => <Row key={e.pkgName} mono={<SourceIcon src={e.iconUrl} name={e.name} />} title={e.name} sub={`${langName(e.lang)} · v${e.versionName}${e.isObsolete ? " · obsolete" : ""}`}
-    button={busy[e.pkgName] ? "Working…" : button} buttonKind={accent ? "accent" : "outline"} onButton={() => !busy[e.pkgName] && act(e, patch)} />;
+    button={button} buttonKind={accent ? "accent" : "outline"} onButton={() => act(e, patch)} />;
   const addRepo = async () => { const url = prompt("Repository index URL (ends in index.min.json)"); if (url) { await gql(M.addStore, { url }).catch((e) => alert(e.message)); stores.reload(); gql(M.fetchExtensions).then(() => ext.reload()); } };
   return (
     <div className="split split-side">
       <div className="list">
         <ErrorNote error={ext.error} onRetry={ext.reload} />
         {ext.loading && !ext.data && <Spinner />}
-        {updates.length > 0 && <><Caps right={<button type="button" onClick={async () => { await gql(M.updateExtensions, { ids: updates.map((e) => e.pkgName) }).catch(() => {}); ext.reload(); }}>Update all</button>}>Updates · {updates.length}</Caps>{updates.map((e) => row(e, "Update", { update: true }, true))}</>}
+        {updates.length > 0 && <><Caps right={<Button small kind="accent" icon="down" onClick={async () => { await gql(M.updateExtensions, { ids: updates.map((e) => e.pkgName) }).catch((e) => alert(e.message)); await ext.reload(); }}>Update all</Button>}>Updates · {updates.length}</Caps>{updates.map((e) => row(e, "Update", { update: true }, true))}</>}
         {installed.length > 0 && <><Caps>Installed · {installed.length}</Caps>{installed.map((e) => row(e, "Uninstall", { uninstall: true }))}</>}
         {available.length > 0 && <><Caps>Available · {available.length}</Caps>{available.slice(0, 300).map((e) => row(e, "Install", { install: true }))}</>}
         {ext.data && !all.length && <Empty icon="extensions" title="No extensions found">Add a repository to see what you can install.</Empty>}

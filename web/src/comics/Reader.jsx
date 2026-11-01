@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { gql, media, Q, M } from "../lib/gql.js";
-import { Button, IconButton, Row, Segmented, Spinner, chapterLabel } from "../ui/kit.jsx";
+import { Button, IconButton, Row, Segmented, Spinner, chapterLabel, friendlyError } from "../ui/kit.jsx";
 import { Icon } from "../ui/icons.jsx";
 import { useComicPrefs, readReaderPrefs, readerPrefsKey, num } from "./data.js";
 
@@ -25,6 +25,7 @@ export default function Reader() {
   const [siblings, setSiblings] = useState([]); // oldest → newest
   const [pages, setPages] = useState(null);
   const [error, setError] = useState(null);
+  const [status, setStatus] = useState("");
   const [ui, setUi] = useState(true);
   const [panel, setPanel] = useState(false);
   const [page, setPage] = useState(0);
@@ -32,11 +33,14 @@ export default function Reader() {
   const [ahead, setAhead] = useState("");
   const scroller = useRef(null);
   const saveTimer = useRef();
+  // Which chapter the loaded pages belong to. Saving waits for this to match, so arriving at the next
+  // chapter (while the previous one's last page is still in state) can never mark it read.
+  const [loadedFor, setLoadedFor] = useState(null);
 
   // Load the chapter, its siblings and its pages.
   useEffect(() => {
     let live = true;
-    setPages(null); setError(null); setPage(0);
+    setPages(null); setError(null); setPage(0); setLoadedFor(null);
     (async () => {
       try {
         const c = (await gql(Q.chapter, { id: cid })).chapter;
@@ -46,9 +50,26 @@ export default function Reader() {
         const list = (await gql(Q.chapters, { id: c.mangaId })).chapters.nodes.slice().reverse();
         if (!live) return;
         setSiblings(list);
-        const p = await pagesFor(cid);
+        let p;
+        try { p = await pagesFor(cid); }
+        catch (e) {
+          // After a restore, Suwayomi refuses pages until the series' chapter list has come from the source itself.
+          // Fetch it (as Mihon does), then open the same chapter, or the one with the same number if its id changed.
+          if (!/Refresh Chapter List/i.test(e.message)) throw e;
+          setStatus("Getting the latest chapter list from the source…");
+          await gql(M.refreshManga, { id: c.mangaId });
+          const fresh = (await gql(Q.chapters, { id: c.mangaId })).chapters.nodes;
+          if (!live) return;
+          const same = fresh.find((x) => x.id === cid) || fresh.find((x) => x.chapterNumber === c.chapterNumber);
+          if (!same) throw new Error("This chapter isn't on the source any more.");
+          if (same.id !== cid) { nav(`/comics/read/${same.id}`, { replace: true }); return; }
+          setSiblings(fresh.slice().reverse());
+          p = await pagesFor(cid);
+          setStatus("");
+        }
         if (!live) return;
         setPages(p);
+        setLoadedFor(cid);
         const start = c.isRead ? 0 : Math.min(c.lastPageRead || 0, p.length - 1);
         setPage(start);
         if (scroller.current && start > 0) requestAnimationFrame(() => scroller.current?.querySelectorAll("img")[start]?.scrollIntoView());
@@ -73,12 +94,12 @@ export default function Reader() {
   // Your place goes to the server (unless incognito); the last page marks the chapter read.
   const total = pages?.length || 0;
   useEffect(() => {
-    if (!total || comicPrefs.incognito) return;
+    if (!total || comicPrefs.incognito || loadedFor !== cid) return;
     clearTimeout(saveTimer.current);
     const done = page >= total - 1;
     saveTimer.current = setTimeout(() => gql(M.updateChapter, { id: cid, patch: done ? { isRead: true, lastPageRead: page } : { lastPageRead: page } }).catch(() => {}), done ? 0 : 1200);
     return () => clearTimeout(saveTimer.current);
-  }, [page, total, cid, comicPrefs.incognito]);
+  }, [page, total, cid, loadedFor, comicPrefs.incognito]);
 
   // Keep the screen awake while reading.
   useEffect(() => {
@@ -116,7 +137,7 @@ export default function Reader() {
 
   useEffect(() => {
     const key = (e) => {
-      if (e.target.closest("input")) return;
+      if (e.target?.closest?.("input")) return;
       if (e.key === "Escape") { panel ? setPanel(false) : nav(`/comics/series/${chapter?.mangaId}`); return; }
       if (webtoon) { if (e.key === " ") { e.preventDefault(); scroller.current?.scrollBy({ top: innerHeight * 0.85 * (e.shiftKey ? -1 : 1), behavior: "smooth" }); } return; }
       const fwd = rtl ? "ArrowLeft" : "ArrowRight", back = rtl ? "ArrowRight" : "ArrowLeft";
@@ -146,7 +167,16 @@ export default function Reader() {
     return rtl ? p.reverse() : p;
   }, [pages, page, spread, rtl, webtoon]);
 
-  if (error) return <div className="reader" data-bg="theme"><div className="chapter-end"><Icon name="alert" size={28} className="warn" /><h2>This chapter didn't load</h2><p>{error.message}</p><div className="hero-actions"><Button onClick={() => location.reload()} icon="refresh">Try again</Button><Button onClick={() => nav(-1)}>Back</Button></div></div></div>;
+  if (error) return (
+    <div className="reader" data-bg="theme"><div className="chapter-end reader-error">
+      <Icon name="alert" size={28} className="warn" /><h2>This chapter didn't load</h2><p>{friendlyError(error)}</p>
+      <div className="actions">
+        <Button kind="accent" icon="refresh" onClick={() => location.reload()}>Try again</Button>
+        {chapter && <Button icon="migrate" onClick={() => nav(`/comics/migrate/${chapter.mangaId}`)}>Read from another source</Button>}
+        <Button onClick={() => nav(chapter ? `/comics/series/${chapter.mangaId}` : -1)}>Back to the series</Button>
+      </div>
+    </div></div>
+  );
   if (!prefs || !chapter) return <div className="reader" data-bg="theme"><Spinner /></div>;
 
   return (
@@ -154,14 +184,14 @@ export default function Reader() {
       {webtoon ? (
         <div className="reader-scroll" ref={scroller} onClick={(e) => { const x = e.clientX / innerWidth; tap(prefs.zones === "edges" && x < 0.25 ? "left" : prefs.zones === "edges" && x > 0.75 ? "right" : "mid"); }}>
           <div className="strip" style={{ "--page-gap": prefs.gap === "small" ? "8px" : prefs.gap === "large" ? "24px" : "0px" }}>
-            {!pages ? <Spinner /> : pages.map((u, i) => <img key={u} src={u} data-i={i} alt={`Page ${i + 1}`} loading={i < 4 ? "eager" : "lazy"} decoding="async" />)}
+            {!pages ? <div className="reader-wait"><Spinner />{status && <p>{status}</p>}</div> : pages.map((u, i) => <img key={u} src={u} data-i={i} alt={`Page ${i + 1}`} loading={i < 4 ? "eager" : "lazy"} decoding="async" />)}
             {pages && <ChapterEnd next={next} onNext={() => nav(`/comics/read/${next.id}`)} onBack={() => nav(`/comics/series/${chapter.mangaId}`)} />}
           </div>
         </div>
       ) : (
         <>
           <div className={`paged${prefs.fit === "width" ? " fit-width" : ""}${spread ? " spread" : ""}`}>
-            {!pages ? <Spinner /> : shown.map((u) => <img key={u} src={u} alt="" className="page-img" decoding="async" />)}
+            {!pages ? <div className="reader-wait"><Spinner />{status && <p>{status}</p>}</div> : shown.map((u) => <img key={u} src={u} alt="" className="page-img" decoding="async" />)}
           </div>
           {pages && pages.slice(page + step, page + step + 3).map((u) => <link key={u} rel="prefetch" href={u} />)}
           <div className="zones">{["left", "mid", "right"].map((z) => <button key={z} type="button" aria-label={z === "mid" ? "Show or hide controls" : z === "left" ? "Left" : "Right"} onClick={() => tap(z)} />)}</div>

@@ -1,8 +1,8 @@
 // Series page (Figma V2 / L9 / L10, phone P2 / M10 / M15): about, continue, chapter list with selection and download states.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { gql, Q, M } from "../lib/gql.js";
-import { Button, Chip, Cover, ErrorNote, IconButton, Menu, Progress, Row, Sheet, Spinner, useLongPress, timeAgo, chapterLabel } from "../ui/kit.jsx";
+import { Button, Chip, Cover, ErrorNote, IconButton, Menu, Progress, Row, Sheet, Spinner, useLongPress, timeAgo, chapterLabel, friendlyError } from "../ui/kit.jsx";
 import { Icon } from "../ui/icons.jsx";
 import { useGql, useDownloads, chapterStatus, STATUS, num } from "./data.js";
 import { CategorySheet } from "./Library.jsx";
@@ -23,8 +23,16 @@ export default function Series() {
   const [sheet, setSheet] = useState(null); // "categories" | "tracking"
   const [refreshing, setRefreshing] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [showTitle, setShowTitle] = useState(false);
 
   const m = manga.data?.manga;
+  // A series whose chapter list never came from the source (e.g. restored from a backup) fetches it once, by itself.
+  const autoFetched = useRef(false);
+  useEffect(() => {
+    if (!m || autoFetched.current || (m.chaptersLastFetchedAt && m.chaptersLastFetchedAt !== "0")) return;
+    autoFetched.current = true;
+    refresh();
+  }, [m]); // eslint-disable-line react-hooks/exhaustive-deps
   const all = chapters.data?.chapters.nodes || [];
   const list = useMemo(() => {
     let l = all;
@@ -41,7 +49,7 @@ export default function Series() {
 
   async function refresh() {
     setRefreshing(true);
-    try { await gql(M.refreshManga, { id: mid }); manga.reload(); chapters.reload(); } catch (e) { alert(e.message); } finally { setRefreshing(false); }
+    try { await gql(M.refreshManga, { id: mid }); manga.reload(); chapters.reload(); } catch (e) { alert(friendlyError(e)); } finally { setRefreshing(false); }
   }
   const run = async (query, vars) => { await gql(query, vars).catch((e) => alert(e.message)); chapters.reload(); manga.reload(); dl.refresh(); };
   const enqueue = (ids) => { gql(M.enqueue, { ids }).catch(() => {}); setTimeout(() => dl.refresh(), 800); };
@@ -58,8 +66,8 @@ export default function Series() {
           <button type="button" className="row-sub actions" onClick={() => nav(-1)}><Icon name="back" size={18} />Back</button>
           <div className="series-head">
             <Cover src={m.thumbnailUrl} title={m.title} />
-            <div style={{ display: "grid", gap: 8, minWidth: 0 }}>
-              <h1>{m.title}</h1>
+            <div className="series-title">
+              <h1 className={`${m.title.length > 40 ? "long" : ""}${showTitle ? " open" : ""}`} onClick={() => setShowTitle(!showTitle)} title={m.title}>{m.title}</h1>
               <p className="sub">{[m.source?.displayName, STATUS[m.status], m.author].filter(Boolean).join(" · ")}</p>
             </div>
           </div>
@@ -70,7 +78,8 @@ export default function Series() {
             <Button icon="down" onClick={() => enqueue([...all].reverse().filter((c) => !c.isRead && !c.isDownloaded).slice(0, 10).map((c) => c.id))}>Next 10</Button>
             <IconButton icon="more" label="More" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setMore({ x: r.left, y: r.bottom + 4 }); }} />
           </div>
-          {m.genre?.length > 0 && <div className="chips wrap">{m.genre.slice(0, 8).map((g) => <span key={g} className="chip" style={{ cursor: "default" }}>{g}</span>)}</div>}
+          {m.genre?.length > 0 && <div className="chips wrap genres">{m.genre.slice(0, 12).map((g) => <button type="button" key={g} className="chip tag" title={`Search ${m.source?.displayName || "this source"} for ${g}`}
+            onClick={() => nav(m.source?.id ? `/comics/source/${m.source.id}?q=${encodeURIComponent(g)}` : `/comics/search?q=${encodeURIComponent(g)}`)}>{g}</button>)}</div>}
           {m.description && <p className="sub" style={showAll ? {} : { display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }} onClick={() => setShowAll(!showAll)}>{m.description}</p>}
         </aside>
 
@@ -127,7 +136,7 @@ export default function Series() {
         m.inLibrary && { icon: "trash", label: "Remove from library", tone: "bad", onClick: () => run(M.setInLibrary, { id: mid, on: false }) },
       ]} />
       <CategorySheet open={sheet === "categories"} onClose={() => setSheet(null)} ids={[mid]} categories={(cats.data?.categories.nodes || []).filter((c) => !c.default)}
-        current={m.categories.nodes.map((c) => c.id)} onDone={() => { setSheet(null); manga.reload(); }} />
+        membership={Object.fromEntries(m.categories.nodes.map((c) => [c.id, 1]))} onDone={() => { setSheet(null); manga.reload(); }} />
       <TrackingSheet open={sheet === "tracking"} onClose={() => setSheet(null)} records={m.trackRecords?.nodes || []} />
     </div>
   );

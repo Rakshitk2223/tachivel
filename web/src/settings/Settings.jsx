@@ -203,6 +203,7 @@ function Tracking() {
 
 function Backup() {
   const [st, set] = useServerSettings();
+  const [comicPrefs] = useComicPrefs();
   const file = useRef(null);
   const [step, setStep] = useState(null); // { phase: "reading"|"check"|"restoring"|"done"|"error", ... }
   const [making, setMaking] = useState(false);
@@ -222,6 +223,39 @@ function Backup() {
       setStep({ phase: "check", name: f.name, backup, stats, missing: v.missingSources });
     } catch (e) { setStep({ phase: "error", error: e.message }); }
   }
+  // Install the extensions the backup needs, matched by source name (adult ones only if they're switched on).
+  async function installMissing() {
+    const exts = (await gql(Q.extensions)).extensions.nodes;
+    const base = (n) => (n || "").toLowerCase().replace(/\s*\([^)]*\)\s*$/, "").trim();
+    const results = [];
+    for (const m of step.missing) {
+      const e = exts.find((x) => base(x.name) === base(m.name) && !x.isInstalled);
+      if (!e) { results.push({ name: m.name || m.id, ok: false, why: "not found in your repositories" }); continue; }
+      if (e.contentWarning === "NSFW" && !comicPrefs.adult) { results.push({ name: "an adult source", ok: false, why: "adult sources are off (Settings → Browse)" }); continue; }
+      try { await gql(M.updateExtension, { id: e.pkgName, patch: { install: true } }); results.push({ name: e.name, ok: true }); }
+      catch { results.push({ name: e.name, ok: false, why: "install failed" }); }
+    }
+    const v = (await gqlUpload(`query($backup: Upload!) { validateBackup(input: { backup: $backup }) { missingSources { id name } } }`, {}, "backup", step.backup)).validateBackup;
+    setStep({ ...step, missing: v.missingSources, installed: results });
+  }
+  // After a restore, fetch every series' chapter list from its source: Suwayomi won't open a chapter
+  // from a list it didn't fetch itself. Uses a full library update with the skip filters lifted, then puts them back.
+  async function refreshRestored(stats) {
+    const keys = ["excludeCompleted", "excludeNotStarted", "excludeUnreadChapters", "excludeEntryWithUnreadChapters"];
+    const before = (await gql(Q.settings)).settings;
+    const saved = Object.fromEntries(keys.map((k) => [k, before[k]]));
+    try {
+      await gql(M.setSettings, { s: Object.fromEntries(keys.map((k) => [k, false])) });
+      await gql(M.updateLibrary, { cats: null });
+      for (let i = 0; i < 2400; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const j = (await gql(Q.libraryUpdate)).libraryUpdateStatus.jobsInfo;
+        setStep({ phase: "refreshing", stats, text: j.totalJobs ? `Fetching chapter lists from the sources: ${j.finishedJobs} of ${j.totalJobs} series…` : "Starting…" });
+        if (!j.isRunning && i > 1) break;
+      }
+    } finally { await gql(M.setSettings, { s: saved }).catch(() => {}); }
+    setStep({ phase: "done", stats });
+  }
   async function restore() {
     const { backup, stats } = step;
     setStep({ phase: "restoring", stats });
@@ -229,7 +263,7 @@ function Backup() {
       const id = (await gqlUpload(M.restoreBackup, {}, "backup", backup)).restoreBackup.id;
       const poll = async () => {
         const s = (await gql(`query($id: String!) { restoreStatus(id: $id) { state mangaProgress totalManga } }`, { id })).restoreStatus;
-        if (s?.state === "SUCCESS") setStep({ phase: "done", stats });
+        if (s?.state === "SUCCESS") refreshRestored(stats).catch((e) => setStep({ phase: "error", error: `Restored, but fetching chapter lists failed: ${e.message}` }));
         else if (s?.state === "FAILURE") setStep({ phase: "error", error: "Suwayomi couldn't finish the restore. Check the file and try again." });
         else { setStep({ phase: "restoring", stats, status: s }); setTimeout(poll, 1500); }
       };
@@ -253,11 +287,17 @@ function Backup() {
             {step.phase === "error" && <span className="warn"><Icon name="alert" size={16} /> {step.error}</span>}
             {step.phase === "check" && <>
               <span className="row-title">{s ? `${s.series} series · ${s.chapters.toLocaleString()} chapters (${s.read.toLocaleString()} read) · ${s.categories} categories` : step.name}</span>
-              {step.missing.length ? <span className="warn">Install these extensions first, or those series won't update until you do: {step.missing.map((m) => m.name || m.id).join(", ")}</span>
+              {step.missing.length ? <span className="warn">{step.missing.length} source{step.missing.length === 1 ? "" : "s"} in this backup {step.missing.length === 1 ? "has" : "have"} no extension installed. Their series still restore, but can't open or update until it's installed.</span>
                 : <span className="ok">Every source is installed.</span>}
-              <span className="actions"><Button kind="accent" icon="upload" onClick={restore}>Restore now</Button>{step.missing.length > 0 && <Button onClick={() => (location.href = "/comics/browse/extensions")}>Install extensions</Button>}<Button kind="ghost" onClick={() => setStep(null)}>Cancel</Button></span>
+              {step.installed && <span className="sub">{step.installed.map((r) => `${r.ok ? "✓" : "✗"} ${r.name}${r.ok ? "" : ` (${r.why})`}`).join(" · ")}</span>}
+              <span className="actions">
+                {step.missing.length > 0 && <Button kind="accent" icon="extensions" onClick={installMissing}>Install {step.missing.length} missing extension{step.missing.length === 1 ? "" : "s"}</Button>}
+                <Button kind={step.missing.length ? "outline" : "accent"} icon="upload" onClick={restore}>{step.missing.length ? "Restore anyway" : "Restore now"}</Button>
+                <Button kind="ghost" onClick={() => setStep(null)}>Cancel</Button>
+              </span>
             </>}
             {step.phase === "restoring" && <span className="actions"><Spinner />Restoring{step.status?.totalManga ? ` · ${step.status.mangaProgress} of ${step.status.totalManga} series` : "…"}</span>}
+            {step.phase === "refreshing" && <span className="actions"><Spinner />{step.text} You can leave this page; the server carries on.</span>}
             {step.phase === "done" && <span className="ok"><Icon name="ok" size={16} /> Restored{s ? ` ${s.series} series` : ""}. Your library is ready.</span>}
           </div>}
           <Row icon="backup" title="Back up now" sub="Library, categories, history, settings" button={making ? "Working…" : "Back up"} onButton={make} />

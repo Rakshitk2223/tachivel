@@ -3,10 +3,20 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "./icons.jsx";
 import { media } from "../lib/gql.js";
 
-export function Button({ kind = "outline", icon, children, small, className = "", ...rest }) {
+// If onClick starts something slow (returns a promise), the button shows a spinner and ignores
+// further taps until it finishes, so a slow server never looks like a missed tap.
+export function Button({ kind = "outline", icon, children, small, className = "", onClick, disabled, ...rest }) {
+  const [busy, setBusy] = useState(false);
+  const live = useRef(true);
+  useEffect(() => () => { live.current = false; }, []);
+  const click = (e) => {
+    if (busy) return;
+    const r = onClick?.(e);
+    if (r && typeof r.then === "function") { setBusy(true); r.catch(() => {}).finally(() => live.current && setBusy(false)); }
+  };
   return (
-    <button type="button" className={`btn btn-${kind}${small ? " btn-sm" : ""} ${className}`} {...rest}>
-      {icon && <Icon name={icon} size={small ? 16 : 18} />}
+    <button type="button" className={`btn btn-${kind}${small ? " btn-sm" : ""}${busy ? " busy" : ""} ${className}`} onClick={click} disabled={disabled || busy} aria-busy={busy || undefined} {...rest}>
+      {busy ? <span className="dot-spin" aria-hidden /> : icon && <Icon name={icon} size={small ? 16 : 18} />}
       {children && <span>{children}</span>}
     </button>
   );
@@ -52,7 +62,7 @@ export function Row({ title, sub, mono, icon, iconTone, value, valueTone, button
         {children}
       </span>
       {value != null && <span className={`row-value ${valueTone || ""}`}>{value}</span>}
-      {button && <Button small kind={buttonKind || "outline"} onClick={(e) => { e.stopPropagation(); onButton?.(); }}>{button}</Button>}
+      {button && <Button small kind={buttonKind || "outline"} onClick={(e) => { e.stopPropagation(); return onButton?.(); }}>{button}</Button>}
       {toggle != null && <Toggle on={toggle} onChange={onToggle} label={title} />}
       {chevron && <Icon name="chevr" size={18} className="muted" />}
     </Tag>
@@ -80,11 +90,21 @@ export function Empty({ icon = "info", title, children, action }) {
     </div>
   );
 }
+// Server errors can be a whole Java stack trace: one short line, in plain words.
+export function friendlyError(error) {
+  const raw = (error?.message || String(error)).split("\n")[0].replace(/^Exception while fetching data \([^)]*\)\s*:\s*/, "").replace(/^(java\.[\w.]+|eu\.kanade[\w.]+):\s*/, "");
+  if (/PKIX|certificate|SSL/i.test(raw)) return "The source couldn't be reached securely from the server.";
+  if (/403|cloudflare|captcha/i.test(raw)) return "The source is blocking requests right now (a bot check). Try again in a bit.";
+  if (/HTTP error 5\d\d|HttpException.*5\d\d/i.test(raw)) return "The source's website is having trouble right now. Try again later or read it from another source.";
+  if (/HTTP error 404/i.test(raw)) return "The source doesn't have this chapter any more. Refresh the series or migrate it to another source.";
+  if (/timeout|timed out/i.test(raw)) return "The source took too long to answer. Try again.";
+  if (/Refresh Chapter List/i.test(raw)) return "This series' chapter list is out of date. Refresh it from the source.";
+  if (/declared as a non null type|wrongly returned a null/i.test(raw)) return "That isn't on your comics server any more. It may have been removed or replaced by a refresh.";
+  return raw.slice(0, 160);
+}
 export function ErrorNote({ error, onRetry }) {
   if (!error) return null;
-  // Server errors can be a whole Java stack trace: show the first line, briefly, in plain words.
-  const raw = (error.message || String(error)).split("\n")[0].replace(/^Exception while fetching data \([^)]*\)\s*:\s*/, "");
-  const msg = /PKIX|certificate|SSL/i.test(raw) ? "The source couldn't be reached securely from the server." : /403|cloudflare|captcha/i.test(raw) ? "The source is blocking requests right now (bot check). Try again in a bit." : raw.slice(0, 160);
+  const msg = friendlyError(error);
   return <div className="note warn" role="alert"><Icon name="alert" size={18} /><span>{msg}</span>{onRetry && <Button small onClick={onRetry}>Try again</Button>}</div>;
 }
 
@@ -152,17 +172,26 @@ export function Cover({ src, title, className = "" }) {
     </div>
   );
 }
-export function ComicCard({ manga, badge, onClick, selected, dim, menu }) {
+// layout: "comfortable" (title below), "compact" (title over the cover), "cover" (cover only)
+export function ComicCard({ manga, badge, onClick, selected, dim, menu, layout = "comfortable", onPlay }) {
   const lp = useLongPress((at) => menu?.(at));
   return (
-    <button type="button" className={`card${selected ? " selected" : ""}${dim ? " dim" : ""}`} onClick={onClick} {...(menu ? lp : {})}>
-      <Cover src={manga.thumbnailUrl} title={manga.title} />
-      {badge?.unread > 0 && <span className="badge unread">{badge.unread}</span>}
-      {badge?.label && <span className="badge unread">{badge.label}</span>}
-      {badge?.downloaded > 0 && <span className="badge dl"><Icon name="down" size={12} />{badge.downloaded}</span>}
-      <span className="card-title">{manga.title}</span>
-      {badge?.meta && <span className="card-meta">{badge.meta}</span>}
-    </button>
+    <div className={`card card-${layout}${selected ? " selected" : ""}${dim ? " dim" : ""}`} {...(menu ? lp : {})}>
+      <div className="card-media">
+        <button type="button" className="card-hit" onClick={onClick} aria-label={manga.title} title={manga.title}>
+          <Cover src={manga.thumbnailUrl} title={manga.title} />
+          {layout === "compact" && <span className="card-over"><span className="card-title">{manga.title}</span></span>}
+        </button>
+        {badge?.unread > 0 && <span className="badge unread">{badge.unread}</span>}
+        {badge?.label && <span className="badge unread">{badge.label}</span>}
+        {badge?.downloaded > 0 && <span className="badge dl"><Icon name="down" size={12} />{badge.downloaded}</span>}
+        {onPlay && <button type="button" className="card-play" aria-label={`Continue ${manga.title}`} onClick={onPlay}><Icon name="play" size={14} /></button>}
+      </div>
+      {layout === "comfortable" && <button type="button" className="card-text" onClick={onClick} tabIndex={-1}>
+        <span className="card-title">{manga.title}</span>
+        {badge?.meta && <span className="card-meta">{badge.meta}</span>}
+      </button>}
+    </div>
   );
 }
 export function Thumb({ src, title }) {

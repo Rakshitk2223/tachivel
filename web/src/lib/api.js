@@ -47,14 +47,36 @@ export function useChanges(fn) {
   }, []);
 }
 
-// Small data hook: load, reload, and keep the last good value while reloading.
-export function useLoad(loader, deps = []) {
-  const [state, set] = useState({ data: undefined, error: null, loading: true });
+// Data cache: every screen shows what it had last time immediately, then refreshes quietly in the background
+// (stale-while-revalidate). It lives in memory and in localStorage, so switching tabs or reopening the app is instant.
+const CACHE_KEY = "tachivel:cache:";
+const memory = new Map();
+function cached(key) {
+  if (!key) return undefined;
+  if (memory.has(key)) return memory.get(key);
+  try { const v = localStorage.getItem(CACHE_KEY + key); if (v != null) { const d = JSON.parse(v); memory.set(key, d); return d; } } catch {}
+  return undefined;
+}
+function remember(key, data) {
+  if (!key) return;
+  memory.set(key, data);
+  try { const v = JSON.stringify(data); if (v.length < 1_500_000) localStorage.setItem(CACHE_KEY + key, v); } catch { /* full: memory still works */ }
+}
+export function forget(prefix = "") {
+  for (const k of [...memory.keys()]) if (k.startsWith(prefix)) memory.delete(k);
+  try { for (const k of Object.keys(localStorage)) if (k.startsWith(CACHE_KEY + prefix)) localStorage.removeItem(k); } catch {}
+}
+
+// Small data hook: load, reload, and keep the last good value while reloading. Pass a cache key to make it instant.
+export function useLoad(loader, deps = [], key = null) {
+  const [state, set] = useState(() => { const d = cached(key); return { data: d, error: null, loading: d === undefined }; });
   const run = useCallback(async () => {
     set((s) => ({ ...s, loading: true }));
-    try { set({ data: await loader(), error: null, loading: false }); }
+    try { const data = await loader(); remember(key, data); set({ data, error: null, loading: false }); }
     catch (error) { if (!(error instanceof SignedOut)) set((s) => ({ ...s, error, loading: false })); }
-  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [...deps, key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { run(); }, [run]);
-  return { ...state, reload: run, setData: (data) => set((s) => ({ ...s, data: typeof data === "function" ? data(s.data) : data })) };
+  // Pull-to-refresh (Shell) asks every screen on show to fetch again.
+  useEffect(() => { addEventListener("tachivel:pull", run); return () => removeEventListener("tachivel:pull", run); }, [run]);
+  return { ...state, reload: run, setData: (data) => set((s) => { const next = typeof data === "function" ? data(s.data) : data; remember(key, next); return { ...s, data: next }; }) };
 }

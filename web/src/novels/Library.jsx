@@ -33,8 +33,8 @@ function useToast() {
 }
 
 export default function NovelsLibrary() {
-  const books = useLoad(api.books);
-  const progress = useLoad(api.progress);
+  const books = useLoad(api.books, [], "api:books");
+  const progress = useLoad(api.progress, [], "api:progress");
   const [cached, setCached] = useState({});
   const [menu, setMenu] = useState(null);
   const [pending, setPending] = useState(null); // { file, title, match }
