@@ -70,6 +70,7 @@ export const Q = {
     flareSolverrEnabled flareSolverrUrl flareSolverrTimeout flareSolverrSessionTtl flareSolverrAsResponseFallback maxSourcesInParallel } }`,
   about: `{ aboutServer { name version buildType } }`,
   trackers: `{ trackers { nodes { id name icon isLoggedIn authUrl } } }`,
+  updateProgress: `{ libraryUpdateStatus { jobsInfo { isRunning totalJobs finishedJobs } mangaUpdates { status manga { id title } } } }`,
   libraryUpdate: `{ libraryUpdateStatus { jobsInfo { isRunning totalJobs finishedJobs } } lastUpdateTimestamp { timestamp } }`,
 };
 
@@ -95,6 +96,7 @@ export const M = {
   renameCategory: `mutation($id: Int!, $name: String!) { updateCategory(input: { id: $id, patch: { name: $name } }) { category { id name } } }`,
   deleteCategory: `mutation($id: Int!) { deleteCategory(input: { categoryId: $id }) { category { id } } }`,
   categoryOrder: `mutation($id: Int!, $position: Int!) { updateCategoryOrder(input: { id: $id, position: $position }) { categories { id order } } }`,
+  updateStop: `mutation { updateStop(input: {}) { clientMutationId } }`,
   updateLibrary: `mutation($cats: [Int!]) { updateLibrary(input: { categories: $cats }) { updateStatus { jobsInfo { isRunning } } } }`,
   fetchSource: `mutation($source: LongString!, $type: FetchSourceMangaType!, $page: Int!, $query: String, $filters: [FilterChangeInput!]) {
     fetchSourceManga(input: { source: $source, type: $type, page: $page, query: $query, filters: $filters }) { hasNextPage mangas { ${MANGA_CARD} } } }`,

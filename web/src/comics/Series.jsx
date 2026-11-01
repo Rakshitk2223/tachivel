@@ -1,7 +1,7 @@
 // Series page (Figma V2 / L9 / L10, phone P2 / M10 / M15), laid out like Mihon / Suwayomi-WebUI:
 // sticky app bar, about block, a "N chapters" row (filter & sort, download, select), long-press to select,
 // a bottom action bar while selecting, and a Continue button that stays within reach.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { gql, Q, M } from "../lib/gql.js";
 import { AppBar, Button, Chip, Cover, ErrorNote, IconButton, Menu, Progress, Row, Segmented, Sheet, Spinner, timeAgo, chapterLabel, friendlyError } from "../ui/kit.jsx";
@@ -72,7 +72,14 @@ export default function Series() {
     say(`Queued ${ids.length} chapter${ids.length === 1 ? "" : "s"} for download.`);
     setTimeout(() => dl.refresh(), 800);
   };
-  const toggle = (cid) => setSel((s) => { const n = new Set(s); n.has(cid) ? n.delete(cid) : n.add(cid); return n.size ? n : null; });
+  const toggle = useCallback((cid) => setSel((s) => { const n = new Set(s); n.has(cid) ? n.delete(cid) : n.add(cid); return n.size ? n : null; }), []);
+  // Rows get stable handlers (latest state read through refs), so a tap only redraws the rows it changes, not all 600.
+  const selRef = useRef(sel), enqueueRef = useRef(enqueue);
+  selRef.current = sel; enqueueRef.current = enqueue;
+  const openChapter = useCallback((cid) => (selRef.current ? toggle(cid) : nav(`/comics/read/${cid}`)), [nav, toggle]);
+  const pressChapter = useCallback((cid) => setSel((s) => new Set([...(s || []), cid])), []);
+  const menuChapter = useCallback((at, c) => setMenu({ at, c }), []);
+  const downloadChapter = useCallback((cid) => enqueueRef.current([cid]), []);
   const toDownload = asc.filter((c) => !c.isRead && !c.isDownloaded);
   const selected = sel ? all.filter((c) => sel.has(c.id)) : [];
   const selIds = selected.map((c) => c.id);
@@ -130,9 +137,8 @@ export default function Series() {
             <div className="note"><Icon name="info" /><span>{refreshing ? "Getting the chapter list from the source…" : "No chapters yet. Refresh from the source to fetch them."}</span>{!refreshing && <Button small icon="refresh" onClick={refresh}>Refresh</Button>}</div>
           ) : !list.length ? <p className="sub">No chapters match this filter.</p> : (
             <div className="chapter-list">
-              {list.map((c) => <Chapter key={c.id} c={c} q={dl.byChapter[c.id]} sel={sel} source={m.source?.displayName}
-                onOpen={() => (sel ? toggle(c.id) : nav(`/comics/read/${c.id}`))} onSelect={() => setSel((s) => new Set([...(s || []), c.id]))}
-                onMenu={(at) => setMenu({ at, c })} onDownload={() => enqueue([c.id])} />)}
+              {list.map((c) => <Chapter key={c.id} c={c} q={dl.byChapter[c.id]} selected={!!sel?.has(c.id)} source={m.source?.displayName}
+                onOpen={openChapter} onSelect={pressChapter} onMenu={menuChapter} onDownload={downloadChapter} />)}
             </div>
           )}
         </section>
@@ -188,27 +194,26 @@ export default function Series() {
 }
 
 // Touch: a long press starts selecting. Mouse: right-click opens the chapter menu.
-function Chapter({ c, q, sel, source, onOpen, onSelect, onMenu, onDownload }) {
+// Memoised: only rows whose chapter, download state or selection changed redraw.
+const Chapter = memo(function Chapter({ c, q, selected, source, onOpen, onSelect, onMenu, onDownload }) {
   const st = chapterStatus(c, q);
   const timer = useRef(null), held = useRef(false);
   const progress = !c.isRead && c.lastPageRead > 0 && c.pageCount > 0 ? `page ${c.lastPageRead + 1} of ${c.pageCount}` : "";
-  const isSel = sel?.has(c.id);
   return (
-    <div className={`chapter${isSel ? " sel" : ""}${c.isRead ? " read" : ""}`}
-      onTouchStart={() => { held.current = false; timer.current = setTimeout(() => { held.current = true; onSelect(); }, 450); }}
+    <div className={`chapter${selected ? " sel" : ""}${c.isRead ? " read" : ""}`} aria-selected={selected || undefined}
+      onTouchStart={() => { held.current = false; timer.current = setTimeout(() => { held.current = true; onSelect(c.id); }, 450); }}
       onTouchMove={() => clearTimeout(timer.current)} onTouchEnd={() => clearTimeout(timer.current)}
-      onContextMenu={(e) => { e.preventDefault(); if (!held.current) onMenu({ x: e.clientX, y: e.clientY }); }}>
-      {sel && <span className={`check${isSel ? " on" : ""}`} aria-hidden>{isSel && <Icon name="check" size={14} />}</span>}
-      <button type="button" className="chapter-hit" onClick={() => { if (held.current) { held.current = false; return; } onOpen(); }}>
+      onContextMenu={(e) => { e.preventDefault(); if (!held.current) onMenu({ x: e.clientX, y: e.clientY }, c); }}>
+      <button type="button" className="chapter-hit" onClick={() => { if (held.current) { held.current = false; return; } onOpen(c.id); }}>
         <span className="row-title">{c.isBookmarked && <Icon name="bookmark" size={14} className="accent" />} {chapterLabel(c)}</span>
         <span className="row-sub">{[c.scanlator || source, timeAgo(c.uploadDate)].filter(Boolean).join(" · ")}{progress && <> · <span className="accent">{progress}</span></>}</span>
       </button>
-      <button type="button" className={`status ${st.tone}`} onClick={!c.isDownloaded && !q ? onDownload : undefined} aria-label={st.label} title={st.label}>
+      <button type="button" className={`status ${st.tone}`} onClick={!c.isDownloaded && !q ? () => onDownload(c.id) : undefined} aria-label={st.label} title={st.label}>
         <span className="hide-phone">{st.label === "Not downloaded" ? "" : st.label}</span><span className="only-phone">{st.short}</span><Icon name={st.icon} size={18} />
       </button>
     </div>
   );
-}
+});
 
 function TrackingSheet({ open, onClose, trackers, records }) {
   const nav = useNavigate();

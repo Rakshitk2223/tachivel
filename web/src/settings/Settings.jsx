@@ -115,7 +115,7 @@ function Library() {
               <Segmented options={[{ value: 0, label: "Off" }, { value: 6, label: "6 h" }, { value: 12, label: "12 h" }, { value: 24, label: "Daily" }]} value={hours} onChange={(h) => set({ globalUpdateInterval: h })} /></div>
             <Row title="Skip completed series" toggle={st.excludeCompleted} onToggle={(v) => set({ excludeCompleted: v })} />
             <Row title="Skip series you haven't started" toggle={st.excludeNotStarted} onToggle={(v) => set({ excludeNotStarted: v })} />
-            <Row title="Skip series with unread chapters" toggle={st.excludeUnreadChapters} onToggle={(v) => set({ excludeUnreadChapters: v })} />
+            <Row title="Skip series with unread chapters" sub="Saves time, but a series you're behind on won't show new chapters" toggle={st.excludeUnreadChapters || st.excludeEntryWithUnreadChapters} onToggle={(v) => set({ excludeUnreadChapters: v, excludeEntryWithUnreadChapters: v })} />
             <Row title="Refresh covers and descriptions too" toggle={st.updateMangas} onToggle={(v) => set({ updateMangas: v })} />
           </>}
         </Group>

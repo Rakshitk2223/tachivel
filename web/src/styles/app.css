@@ -139,7 +139,7 @@ p { margin: 0; }
 
 /* Sheets, dialogs, menus */
 dialog.sheet { border: 0; padding: 0; background: transparent; color: inherit; max-width: none; max-height: none; }
-dialog.sheet::backdrop { background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(2px); }
+dialog.sheet::backdrop { background: color-mix(in srgb, var(--bg) 78%, transparent); }
 .sheet-body { background: var(--surface); border-radius: var(--radius-lg); padding: var(--space-6); width: min(560px, calc(100vw - 32px)); max-height: min(86vh, 860px); overflow: auto; display: flex; flex-direction: column; gap: var(--space-4); box-shadow: var(--elev-3); }
 dialog.sheet.wide .sheet-body { width: min(820px, calc(100vw - 32px)); }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; }
@@ -520,3 +520,20 @@ button, a, label, .chip, .seg button { touch-action: manipulation; }            
 .chapter .row-title, .srow.unread .row-title { font-weight: var(--weight-bold); color: var(--text); }
 .chapter.read .row-title, .srow.read .row-title { font-weight: var(--weight-regular); }
 .chapter.read .chapter-hit, .srow.read .row-text, .srow.read .thumb { opacity: .42; }
+/* Long chapter lists: the browser skips layout and paint for rows off screen. Selected rows are tinted, like Mihon (no checkbox, so nothing shifts). */
+.chapter { content-visibility: auto; contain-intrinsic-size: auto 60px; }
+.chapter.sel, .chapter.sel:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+/* Library check progress, like Mihon's update notification */
+.update-bar { position: fixed; z-index: 30; right: var(--space-5); bottom: var(--space-5); width: min(380px, calc(100vw - 32px)); display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-2) var(--space-3) var(--space-4); border-radius: var(--radius-lg); background: var(--surface-2); color: var(--text); box-shadow: var(--elev-3); }
+.update-bar .grow { flex: 1; min-width: 0; display: grid; gap: var(--space-1); }
+.update-text { display: flex; justify-content: space-between; gap: var(--space-3); font-size: var(--text-sm); }
+.update-text span { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.update-bar small { color: var(--text-muted); font-size: var(--text-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.update-bar.done .grow { font-size: var(--text-sm); }
+@media (max-width: 700px) {
+  .update-bar { left: var(--space-3); right: var(--space-3); width: auto; bottom: calc(72px + env(safe-area-inset-bottom)); }
+  .shell:has(.update-bar) .fab { bottom: calc(150px + env(safe-area-inset-bottom)); }
+  .shell:has(.update-bar) .action-bar, .shell:has(.update-bar) .toast { bottom: calc(146px + env(safe-area-inset-bottom)); }
+}
+@media (min-width: 701px) { .shell:has(.update-bar) .toast { bottom: calc(var(--space-6) + 84px); } }

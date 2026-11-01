@@ -6,6 +6,7 @@ import { AppBar, Button, Chip, ComicCard, Empty, ErrorNote, IconButton, Menu, Ro
 import { Icon } from "../ui/icons.jsx";
 import { ModeSwitch } from "../shell/Shell.jsx";
 import { useGql, useComicPrefs, num } from "./data.js";
+import { UPDATE_STARTED } from "./UpdateBar.jsx";
 
 const SORTS = [{ value: "latest", label: "Latest chapter" }, { value: "read", label: "Last read" }, { value: "title", label: "A–Z" },
   { value: "unread", label: "Unread" }, { value: "total", label: "Total chapters" }, { value: "added", label: "Date added" }];
@@ -44,7 +45,8 @@ export default function ComicsLibrary() {
 
   // While a library check runs on the server, poll its progress.
   const running = upd.data?.libraryUpdateStatus.jobsInfo.isRunning;
-  useEffect(() => { if (!running) return; const t = setInterval(() => { upd.reload(); all.reload(); }, 3000); return () => clearInterval(t); }, [running]); // eslint-disable-line
+  // The library itself reloads once when the check ends (UpdateBar fires tachivel:pull), not every few seconds.
+  useEffect(() => { if (!running) return; const t = setInterval(() => upd.reload(), 3000); return () => clearInterval(t); }, [running]); // eslint-disable-line
 
   const mangas = all.data?.mangas.nodes || [];
   const shown = useMemo(() => {
@@ -68,29 +70,12 @@ export default function ComicsLibrary() {
   const withNew = mangas.filter((m) => m.unreadCount > 0).length;
   const lastCheck = Number(upd.data?.lastUpdateTimestamp?.timestamp || 0);
 
-  // Refresh = ask the server to check this category's series for new chapters, and say what happened.
-  const [check, setCheck] = useState(null); // { phase: "running" | "done" | "error", text }
+  // Refresh = ask the server to check this category's series for new chapters. The update strip (UpdateBar) shows progress and Cancel.
+  const [check, setCheck] = useState(null); // only for a failure to start
   async function refresh() {
-    if (check?.phase === "running") return;
-    const unread = (list) => list.reduce((n, m) => n + m.unreadCount, 0);
-    const before = unread(mangas);
-    const scope = cat > 0 ? categories.find((c) => c.id === cat)?.name : null;
-    setCheck({ phase: "running", text: `Checking ${scope ? `“${scope}”` : "your library"} for new chapters…` });
-    try {
-      await gql(M.updateLibrary, { cats: cat > 0 ? [cat] : null });
-      for (let i = 0; i < 600; i++) {
-        await new Promise((r) => setTimeout(r, 1500));
-        const s = (await gql(Q.libraryUpdate)).libraryUpdateStatus.jobsInfo;
-        if (s.totalJobs) setCheck({ phase: "running", text: `Checking ${s.finishedJobs} of ${s.totalJobs} series…` });
-        if (!s.isRunning) break;
-      }
-      const fresh = (await gql(Q.libraryAll)).mangas.nodes;
-      all.setData({ mangas: { nodes: fresh } });
-      const gained = unread(fresh) - before;
-      setCheck({ phase: "done", text: gained > 0 ? `${gained} new chapter${gained === 1 ? "" : "s"}.` : "Up to date: nothing new." });
-      upd.reload();
-      setTimeout(() => setCheck((c) => (c?.phase === "done" ? null : c)), 5000);
-    } catch (e) { setCheck({ phase: "error", text: `Couldn't check: ${e.message.split("\n")[0].slice(0, 120)}` }); setTimeout(() => setCheck(null), 8000); }
+    if (running) return;
+    try { await gql(M.updateLibrary, { cats: cat > 0 ? [cat] : null }); dispatchEvent(new Event(UPDATE_STARTED)); upd.reload(); }
+    catch (e) { setCheck({ phase: "error", text: `Couldn't start the check: ${friendlyError(e)}` }); setTimeout(() => setCheck(null), 8000); }
   }
   const toggleSel = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n.size ? n : null; });
   const say = (t) => { setToast(t); setTimeout(() => setToast(""), 3500); };
@@ -140,14 +125,14 @@ export default function ComicsLibrary() {
             </> : <>
               <ModeSwitch compact /><span style={{ flex: 1 }} />
               <IconButton icon="search" label="Search your library" onClick={() => setSearching(true)} />
-              <IconButton icon="refresh" label="Check for new chapters" className={check?.phase === "running" ? "spinning" : ""} onClick={refresh} />
+              <IconButton icon="refresh" label="Check for new chapters" className={running ? "spinning" : ""} onClick={refresh} />
               <IconButton icon="filter" label="Display" onClick={() => setDisplay(true)} />
             </>}
           </div>
           <div className="page-head hide-phone">
             <div className="grow"><h1>Comics</h1><p className="sub">{mangas.length} series · {withNew} with new chapters · {SORTS.find((x) => x.value === prefs.sort)?.label} {prefs.desc ? "↓" : "↑"}{filterCount ? ` · ${filterCount} filter${filterCount > 1 ? "s" : ""}` : ""} · {running ? `checking ${upd.data.libraryUpdateStatus.jobsInfo.finishedJobs} of ${upd.data.libraryUpdateStatus.jobsInfo.totalJobs}…` : lastCheck ? `checked ${timeAgo(lastCheck)}` : "not checked yet"}</p></div>
             <label className="search" style={{ width: 280 }}><Icon name="search" size={16} className="muted" /><input placeholder="Search your library" value={q} onChange={(e) => setQ(e.target.value)} /></label>
-            <Button icon="refresh" onClick={refresh} disabled={running || check?.phase === "running"}>{running || check?.phase === "running" ? "Checking…" : "Refresh"}</Button>
+            <Button icon="refresh" onClick={refresh} disabled={running}>{running ? "Checking…" : "Refresh"}</Button>
             <Button kind="soft" icon="filter" onClick={() => setDisplay(true)}>Display</Button>
           </div>
         </>
@@ -229,7 +214,7 @@ export default function ComicsLibrary() {
         <Row title="Category tabs" toggle={prefs.tabs?.show !== false} onToggle={(v) => setPrefs({ tabs: { ...prefs.tabs, show: v } })} />
         <Row title="Number of series on each tab" toggle={prefs.tabs?.counts !== false} onToggle={(v) => setPrefs({ tabs: { ...prefs.tabs, counts: v } })} />
       </Sheet>
-      {check && <div className={`toast ${check.phase}`} role="status">{check.phase === "running" && <span className="dot-spin" aria-hidden />}{check.text}</div>}
+      {check && <div className="toast error" role="status">{check.text}</div>}
       <CategorySheet open={catSheet} onClose={() => setCatSheet(false)} ids={sel ? [...sel] : []} categories={(cats.data?.categories.nodes || []).filter((c) => !c.default)}
         membership={sel ? mangas.filter((m) => sel.has(m.id)).reduce((acc, m) => { m.categories.nodes.forEach((c) => { acc[c.id] = (acc[c.id] || 0) + 1; }); return acc; }, {}) : {}} onDone={() => { setCatSheet(false); setSel(null); all.reload(); cats.reload(); }} />
     </div>
