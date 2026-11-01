@@ -88,3 +88,30 @@ After closing and reopening it, it resumes at the same sentence.
 
 ## Open questions
 - None right now. A Tauri wrapper stays a later option.
+
+## v2: Tachivel on the Oracle server (decided 2026-11-01)
+
+One user (me). Everything runs on the Oracle box; nothing depends on the office Mac.
+
+- **Address:** `tachivel.rakshiit.me` (DNS at Namecheap, A record → 129.225.103.66). Caddy, already on the box, does HTTPS.
+- **Login:** Tinyauth in front of the whole site through Caddy `forward_auth`. Sign-in works two ways, both allowed for me only: Google (phone and iPad) or email + password (the office Mac blocks Google sign-in). The passphrase, sessions and rate limits in `core.mjs` are removed. An upload token lets scripted EPUB uploads past the login, for the upload endpoint only.
+- **Storage:** a 30 GB disk image mounted at `/srv/tachivel`, so Tachivel can't eat other apps' space. It can be grown while mounted; shrinking needs a few minutes offline.
+- **Services (one Compose project):** tachivel-api (`core.mjs` storing to disk, multi-book), Suwayomi (comics engine, single user), FlareSolverr (Cloudflare). Only Caddy is public.
+- **Novels:** a library of several books. Upload or replace an EPUB from any device, with an in-app upload button and an iOS Share-sheet Shortcut. Each book keeps its own place, synced.
+- **Comics:** like Tachimanga. Pick chapters to download; the server queues them and retries until Cloudflare lets them through, with no limit. Anything not downloaded reads live. Downloaded chapters can also be saved onto the phone for offline reading.
+- **Cost: $0 forever.** The Oracle account is Pay-As-You-Go, so only Always Free resources. The 30 GB cap is a file inside the existing disk, not new storage.
+- **Anime:** not in Tachivel. It will be a separate app later (Jellyfin + Infuse/Swiftfin).
+- **No integrations with unlicensed ebook sites.** Books found elsewhere come in through upload.
+- **Netlify:** removed once the server version works on all devices (see CLAUDE.md for what goes).
+
+### v2 build order (approved 2026-11-01; designs in FIGMA.md "v2" and "Round 2")
+Build path: Tachivel's own React + Vite app, to the Figma screens. Reuse Suwayomi-WebUI's GraphQL queries (MPL-2.0) where it saves time.
+1. **Server**: done. `server/` holds a multi-book API on disk, with no passphrase, a token for upload, live sync over SSE, and 9 tests. `deploy/` holds the Compose file for app, Suwayomi, FlareSolverr and Tinyauth, plus the Caddy config and the storage script.
+2. **web/ scaffold**: done. Vite + React, the 7 themes, rail / tab bar, Novels/Comics switch, service worker and manifest.
+3. **Novels v2**: done. The listen-along reader kept its vanilla engine; it moved to `web/public/novel/`, opened at `/novel/?book=<id>`, with a per-book sync layer. Added the multi-book shelf, upload/replace dialog (V6) and live sync.
+4. **Comics**: done. Library, series, reader (webtoon / LTR / RTL / two-page spreads), updates, history, downloads.
+5. **Browse**: done. Sources, catalogue and filters, global search, extensions and repos, migrate. Adult-only sources are hidden by default.
+6. **Settings**: done. Appearance, library and categories, reader, downloads, browse, tracking, backup (**the Tachimanga `.tmb` import works**: 829 series restored in a test), server.
+7. **Hosting**: next. DNS, first deploy on Oracle, Google OAuth, retire Netlify.
+
+Not yet tested against real sources: this office network's Zscaler breaks the server's HTTPS to sources. The comics screens were tested with generated local-source series instead. Real-source tests happen on Oracle.

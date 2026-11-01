@@ -1,6 +1,6 @@
 # Comics mode: findings and plan
 
-Status: **parked**. Only the Novels/Comics switch and the "Coming later" placeholder are built. These are notes so we can pick it up later without redoing the research.
+Status: **active again (2026-11-01).** Hosting decided: the Oracle server, single user, behind Tinyauth. See PLAN.md "v2".
 
 ## Goal
 
