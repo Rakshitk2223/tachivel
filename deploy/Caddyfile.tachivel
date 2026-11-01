@@ -1,5 +1,7 @@
 # Add to /etc/caddy/Caddyfile on the Oracle box, then: sudo systemctl reload caddy
 # Needs DNS A records for tachivel.rakshiit.me and auth.rakshiit.me → the server's IP.
+# Caddy needs TACHIVEL_PROXY_SECRET in its environment (same value as PROXY_SECRET in deploy/.env):
+#   sudo systemctl edit caddy  →  [Service] Environment=TACHIVEL_PROXY_SECRET=<value>
 
 (tinyauth) {
 	forward_auth 127.0.0.1:47630 {
@@ -14,13 +16,16 @@ tachivel.rakshiit.me {
 	request_header -Remote-User
 	request_header -Remote-Email
 	request_header -Remote-Name
+	request_header -X-Tachivel-Proxy
 
 	# Scripted EPUB uploads carry their own bearer token, checked by the app.
 	handle /api/upload {
 		request_body {
 			max_size 200MB
 		}
-		reverse_proxy 127.0.0.1:47620
+		reverse_proxy 127.0.0.1:47620 {
+			header_up X-Tachivel-Proxy {env.TACHIVEL_PROXY_SECRET}
+		}
 	}
 
 	handle {
@@ -32,6 +37,8 @@ tachivel.rakshiit.me {
 		# flush_interval -1: live-sync events go out immediately
 		reverse_proxy 127.0.0.1:47620 {
 			flush_interval -1
+			# Proves to the app that this request came through Caddy (and so through the sign-in).
+			header_up X-Tachivel-Proxy {env.TACHIVEL_PROXY_SECRET}
 		}
 	}
 }

@@ -14,6 +14,7 @@ Cost: $0. Everything here runs on the Always Free A1 server you already have. It
 2. On the box: `git clone` the repo, then run `bash deploy/setup-storage.sh`.
 3. Create `deploy/.env` by hand with these variables:
    - `UPLOAD_TOKEN`
+   - `PROXY_SECRET`: Caddy sends it with every request; the app ignores identity headers without it. Give Caddy the same value with `sudo systemctl edit caddy` (`Environment=TACHIVEL_PROXY_SECRET=...`).
    - `TINYAUTH_SECRET`
    - `TINYAUTH_USERS`
    - `ALLOWED_EMAIL`

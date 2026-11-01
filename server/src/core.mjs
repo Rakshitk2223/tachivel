@@ -78,14 +78,21 @@ async function addBook(store, bytes, { replace, name, now }) {
   return json({ book, replaced: !!target }, target ? 200 : 201);
 }
 
-// deps: { store, uploadToken, now, notify(change) }
+// The identity header is only believed when Caddy's shared secret comes with it: Suwayomi runs third-party
+// extension code on the same machine, and that code must not be able to claim to be you.
+export function trustedUser(req, proxySecret) {
+  if (proxySecret && !sameToken(req.headers.get("x-tachivel-proxy"), proxySecret)) return null;
+  return req.headers.get("remote-user") || req.headers.get("remote-email") || null;
+}
+
+// deps: { store, uploadToken, proxySecret, now, notify(change) }
 export async function handle(req, deps) {
   const { store, notify = () => {} } = deps;
   const now = deps.now ?? Date.now();
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, "");
   const method = req.method;
-  const user = req.headers.get("remote-user") || req.headers.get("remote-email");
+  const user = trustedUser(req, deps.proxySecret);
 
   // Scripts (the weekly EPUB build) upload with a token instead of a sign-in. Same-title books are replaced in place.
   if (path === "/api/upload" && method === "POST") {

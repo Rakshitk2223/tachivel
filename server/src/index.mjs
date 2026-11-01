@@ -2,13 +2,14 @@
 //   DATA_DIR      where books, progress and settings live (default ./data)
 //   PUBLIC_DIR    the built web app (default ../web/dist)
 //   UPLOAD_TOKEN  bearer token for POST /api/upload (scripted EPUB pushes)
+//   PROXY_SECRET  shared secret Caddy adds to every request; without it, identity headers are ignored
 //   DEV_USER      local development only: pretend this user is signed in
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { fileStore } from "./store.mjs";
-import { handle } from "./core.mjs";
+import { handle, trustedUser } from "./core.mjs";
 
 const PORT = Number(process.env.PORT || 8080);
 const store = fileStore(resolve(process.env.DATA_DIR || "./data"));
@@ -25,9 +26,11 @@ const SECURITY = {
 const listeners = new Set();
 const notify = (change) => { const line = `event: change\ndata: ${JSON.stringify(change)}\n\n`; for (const res of listeners) res.write(line); };
 
+const PROXY_SECRET = process.env.PROXY_SECRET;
+if (!PROXY_SECRET && !process.env.DEV_USER) console.warn("PROXY_SECRET is not set: identity headers are trusted from anyone who can reach this port.");
 function signedIn(req) {
-  if (process.env.DEV_USER) req.headers["remote-user"] = process.env.DEV_USER;
-  return req.headers["remote-user"] || req.headers["remote-email"];
+  if (process.env.DEV_USER) { req.headers["remote-user"] = process.env.DEV_USER; if (PROXY_SECRET) req.headers["x-tachivel-proxy"] = PROXY_SECRET; }
+  return trustedUser(new Request("http://x", { headers: req.headers }), PROXY_SECRET);
 }
 
 async function serveStatic(req, res, pathname) {
@@ -61,7 +64,7 @@ createServer(async (req, res) => {
   if (url.pathname.startsWith("/api/")) {
     signedIn(req);
     const body = ["GET", "HEAD"].includes(req.method) ? undefined : Readable.toWeb(req);
-    const r = await handle(new Request(url, { method: req.method, headers: req.headers, body, duplex: "half" }), { store, uploadToken: process.env.UPLOAD_TOKEN, notify })
+    const r = await handle(new Request(url, { method: req.method, headers: req.headers, body, duplex: "half" }), { store, uploadToken: process.env.UPLOAD_TOKEN, proxySecret: PROXY_SECRET, notify })
       .catch((e) => { console.error(e); return new Response(JSON.stringify({ error: "Something went wrong on the server." }), { status: 500 }); });
     res.writeHead(r.status, { ...Object.fromEntries(r.headers), ...SECURITY });
     if (!r.body) return res.end();

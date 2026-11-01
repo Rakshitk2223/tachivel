@@ -1,8 +1,14 @@
 # Tachivel on the Oracle box. Everything listens on 127.0.0.1 only; Caddy (on the host) is the one public door.
 # All data lives under /srv/tachivel, the 30 GB Tachivel disk (see setup-storage.sh).
 #   cd deploy && docker compose up -d --build
-# Image tags: pin exact versions in .env on first deploy (see .env.example), then bump on purpose.
+# Image tags: pin exact versions in .env on first deploy (see README), then bump on purpose.
+# Each piece gets its own network: Suwayomi runs third-party extension code, so it must not be able to reach the app or the login.
 name: tachivel
+
+networks:
+  app: {}
+  comics: {}
+  auth: {}
 
 services:
   app:
@@ -10,6 +16,8 @@ services:
     restart: unless-stopped
     environment:
       UPLOAD_TOKEN: ${UPLOAD_TOKEN:?set UPLOAD_TOKEN in deploy/.env}
+      PROXY_SECRET: ${PROXY_SECRET:?set PROXY_SECRET in deploy/.env (same value Caddy sends)}
+    networks: [app]
     volumes:
       - /srv/tachivel/app:/data
     ports:
@@ -32,6 +40,7 @@ services:
     ports:
       - "127.0.0.1:4567:4567"
     mem_limit: 1536m
+    networks: [comics]
     depends_on: [flaresolverr]
 
   # Gets past Cloudflare bot checks for sources like Asura. Headless Chrome, so it's capped.
@@ -42,6 +51,7 @@ services:
       TZ: Asia/Kolkata
       LOG_LEVEL: info
     mem_limit: 1g
+    networks: [comics]
 
   # The login in front of everything: Google (your Gmail only) or username + password.
   tinyauth:
@@ -56,5 +66,6 @@ services:
       OAUTH_WHITELIST: ${ALLOWED_EMAIL:?set ALLOWED_EMAIL}
       SESSION_EXPIRY: "7776000"          # 90 days, so each device signs in about once a season
       # Variable names differ between Tinyauth major versions; check them for the tag you pin.
+    networks: [auth]
     ports:
       - "127.0.0.1:47630:3000"

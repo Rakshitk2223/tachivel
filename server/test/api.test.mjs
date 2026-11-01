@@ -174,3 +174,13 @@ test("a Tachimanga backup converts to a Mihon-format backup with the library, ch
   await s.cleanup();
   await rm(dir, { recursive: true, force: true });
 });
+
+test("with a proxy secret set, the identity header alone is not enough", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "tachivel-"));
+  const store = fileStore(dir);
+  const call = (headers) => handle(new Request("https://x/api/me", { headers }), { store, proxySecret: "caddy-only" });
+  assert.equal((await call({ "remote-user": "intruder" })).status, 401, "a co-located process can't just claim to be you");
+  assert.equal((await call({ "remote-user": "intruder", "x-tachivel-proxy": "guess" })).status, 401);
+  assert.equal((await call({ "remote-user": "rakshit", "x-tachivel-proxy": "caddy-only" })).status, 200);
+  await rm(dir, { recursive: true, force: true });
+});
