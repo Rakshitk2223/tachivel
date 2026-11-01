@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { gql, Q, M } from "../lib/gql.js";
-import { Button, Chip, ComicCard, Empty, ErrorNote, IconButton, Menu, Row, Segmented, Sheet, Spinner, Thumb, Toggle, timeAgo, useLongPress } from "../ui/kit.jsx";
+import { AppBar, Button, Chip, ComicCard, Empty, ErrorNote, IconButton, Menu, Row, Segmented, Sheet, Spinner, Thumb, timeAgo, useLongPress, friendlyError } from "../ui/kit.jsx";
 import { Icon } from "../ui/icons.jsx";
 import { ModeSwitch } from "../shell/Shell.jsx";
 import { useGql, useComicPrefs, num } from "./data.js";
@@ -29,6 +29,8 @@ export default function ComicsLibrary() {
   const [menu, setMenu] = useState(null);
   const [catSheet, setCatSheet] = useState(false);
   const [busy, setBusy] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [toast, setToast] = useState("");
 
   const categories = (cats.data?.categories.nodes || []).filter((c) => !(c.default && c.mangas.totalCount === 0));
   useEffect(() => { if (cat === -1 && categories.length) setCat(categories[0].id); }, [categories, cat]);
@@ -91,20 +93,28 @@ export default function ComicsLibrary() {
     } catch (e) { setCheck({ phase: "error", text: `Couldn't check: ${e.message.split("\n")[0].slice(0, 120)}` }); setTimeout(() => setCheck(null), 8000); }
   }
   const toggleSel = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n.size ? n : null; });
+  const say = (t) => { setToast(t); setTimeout(() => setToast(""), 3500); };
+  // Bulk actions on the selected series. Chapter lists load in parallel; one request per change.
   async function bulk(kind) {
     const ids = [...sel];
+    if (kind === "remove" && !confirm(`Remove ${ids.length} series from your library? Their downloads stay on the server.`)) return;
     setBusy(kind);
     try {
-      if (kind === "remove") { if (!confirm(`Remove ${ids.length} series from your library?`)) return; await gql(M.setInLibraryMany, { ids, on: false }); }
-      if (kind === "read" || kind === "download") {
-        for (const id of ids) {
-          const ch = (await gql(Q.chapters, { id })).chapters.nodes;
-          if (kind === "read") { const unread = ch.filter((c) => !c.isRead).map((c) => c.id); if (unread.length) await gql(M.updateChapters, { ids: unread, patch: { isRead: true } }); }
-          else { const todo = ch.filter((c) => !c.isRead && !c.isDownloaded).map((c) => c.id); if (todo.length) gql(M.enqueue, { ids: todo }).catch(() => {}); }
+      if (kind === "remove") await gql(M.setInLibraryMany, { ids, on: false });
+      else {
+        const chapters = (await Promise.all(ids.map((id) => gql(Q.chapters, { id })))).flatMap((r) => r.chapters.nodes);
+        const pick = { read: (c) => !c.isRead, unread: (c) => c.isRead || c.lastPageRead > 0, download: (c) => !c.isRead && !c.isDownloaded, deleteDownloads: (c) => c.isDownloaded }[kind];
+        const todo = chapters.filter(pick).map((c) => c.id);
+        if (todo.length) {
+          if (kind === "read") await gql(M.updateChapters, { ids: todo, patch: { isRead: true } });
+          if (kind === "unread") await gql(M.updateChapters, { ids: todo, patch: { isRead: false, lastPageRead: 0 } });
+          if (kind === "download") gql(M.enqueue, { ids: todo }).catch(() => {});
+          if (kind === "deleteDownloads") await gql(M.deleteDownloads, { ids: todo });
         }
+        say(!todo.length ? "Nothing to change." : { read: `Marked ${todo.length} chapters read.`, unread: `Marked ${todo.length} chapters unread.`, download: `Queued ${todo.length} chapters for download.`, deleteDownloads: `Deleted ${todo.length} downloaded chapters.` }[kind]);
       }
       setSel(null); all.reload();
-    } finally { setBusy(""); }
+    } catch (e) { say(friendlyError(e)); } finally { setBusy(""); }
   }
 
   const longPress = useLongPress((at) => pressed.current && (sel ? toggleSel(pressed.current.id) : setMenu({ at, m: pressed.current })));
@@ -116,24 +126,28 @@ export default function ComicsLibrary() {
   return (
     <div className="page">
       {sel ? (
-        <div className="selbar">
+        <AppBar back={false} title={`${sel.size} selected`} actions={<>
+          <IconButton icon="select" label="Select all" onClick={() => setSel(new Set(shown.map((m) => m.id)))} />
+          <IconButton icon="invert" label="Invert selection" onClick={() => setSel((s) => { const n = new Set(shown.filter((m) => !s.has(m.id)).map((m) => m.id)); return n.size ? n : null; })} />
           <IconButton icon="close" label="Stop selecting" onClick={() => setSel(null)} />
-          <b>{sel.size} selected</b>
-          <button type="button" className="muted" onClick={() => setSel(new Set(shown.map((m) => m.id)))}>Select all</button>
-          <span className="grow" />
-          <Button small icon="tag" onClick={() => setCatSheet(true)}>Category</Button>
-          <Button small icon="check" disabled={!!busy} onClick={() => bulk("read")}>Mark read</Button>
-          <Button small icon="down" disabled={!!busy} onClick={() => bulk("download")}>Download new</Button>
-          {sel.size === 1 && <Button small icon="migrate" onClick={() => nav(`/comics/migrate/${[...sel][0]}`)}>Migrate</Button>}
-          <Button small kind="danger" icon="trash" disabled={!!busy} onClick={() => bulk("remove")}>Remove</Button>
-        </div>
+        </>} />
       ) : (
         <>
-          <div className="page-head only-phone"><ModeSwitch compact /><span style={{ flex: 1 }} /><IconButton icon="search" label="Search sources" onClick={() => nav("/comics/search")} /><IconButton icon="refresh" label="Check for new chapters" className={check?.phase === "running" ? "spinning" : ""} onClick={refresh} /></div>
-          <div className="page-head">
+          <div className="page-head only-phone">
+            {searching ? <>
+              <label className="search grow"><Icon name="search" size={16} className="muted" /><input autoFocus placeholder="Search your library" value={q} onChange={(e) => setQ(e.target.value)} enterKeyHint="search" /></label>
+              <IconButton icon="close" label="Close search" onClick={() => { setSearching(false); setQ(""); }} />
+            </> : <>
+              <ModeSwitch compact /><span style={{ flex: 1 }} />
+              <IconButton icon="search" label="Search your library" onClick={() => setSearching(true)} />
+              <IconButton icon="refresh" label="Check for new chapters" className={check?.phase === "running" ? "spinning" : ""} onClick={refresh} />
+              <IconButton icon="filter" label="Display" onClick={() => setDisplay(true)} />
+            </>}
+          </div>
+          <div className="page-head hide-phone">
             <div className="grow"><h1>Comics</h1><p className="sub">{mangas.length} series · {withNew} with new chapters · {SORTS.find((x) => x.value === prefs.sort)?.label} {prefs.desc ? "↓" : "↑"}{filterCount ? ` · ${filterCount} filter${filterCount > 1 ? "s" : ""}` : ""} · {running ? `checking ${upd.data.libraryUpdateStatus.jobsInfo.finishedJobs} of ${upd.data.libraryUpdateStatus.jobsInfo.totalJobs}…` : lastCheck ? `checked ${timeAgo(lastCheck)}` : "not checked yet"}</p></div>
-            <label className="search hide-phone" style={{ width: 280 }}><Icon name="search" size={16} className="muted" /><input placeholder="Search your library" value={q} onChange={(e) => setQ(e.target.value)} /></label>
-            <Button className="hide-phone" icon="refresh" onClick={refresh} disabled={running || check?.phase === "running"}>{running || check?.phase === "running" ? "Checking…" : "Refresh"}</Button>
+            <label className="search" style={{ width: 280 }}><Icon name="search" size={16} className="muted" /><input placeholder="Search your library" value={q} onChange={(e) => setQ(e.target.value)} /></label>
+            <Button icon="refresh" onClick={refresh} disabled={running || check?.phase === "running"}>{running || check?.phase === "running" ? "Checking…" : "Refresh"}</Button>
             <Button kind="soft" icon="filter" onClick={() => setDisplay(true)}>Display</Button>
           </div>
         </>
@@ -145,6 +159,7 @@ export default function ComicsLibrary() {
         </div>
       )}
       <ErrorNote error={all.error} onRetry={all.reload} />
+      {q.trim() && <Row icon="globe" title={`Search sources for “${q.trim()}”`} sub={shown.length ? `${shown.length} in your library` : "Nothing in your library matches"} chevron onClick={() => nav(`/comics/search?q=${encodeURIComponent(q.trim())}`)} />}
       {all.loading && !all.data ? <Spinner /> : !mangas.length ? (
         <Empty icon="comic" title="Your comics library is empty" action={<div className="hero-actions"><Button kind="accent" icon="browse" onClick={() => nav("/comics/browse")}>Browse sources</Button><Button icon="backup" onClick={() => nav("/settings/backup")}>Restore a backup</Button></div>}>
           Add series from your sources, or bring your whole library over from a backup.
@@ -173,6 +188,18 @@ export default function ComicsLibrary() {
             onClick={() => (sel ? toggleSel(m.id) : nav(`/comics/series/${m.id}`))} menu={(at) => (sel ? toggleSel(m.id) : setMenu({ at, m }))} />)}
         </div>
       )}
+      {sel && (
+        <nav className="action-bar" aria-label="Selected series">
+          <IconButton icon="tag" label="Categories" onClick={() => setCatSheet(true)} />
+          <IconButton icon="check" label="Mark read" disabled={!!busy} className={busy === "read" ? "spinning" : ""} onClick={() => bulk("read")} />
+          <IconButton icon="incognito" label="Mark unread" disabled={!!busy} onClick={() => bulk("unread")} />
+          <IconButton icon="down" label="Download unread" disabled={!!busy} onClick={() => bulk("download")} />
+          <IconButton icon="storage" label="Delete downloads" disabled={!!busy} onClick={() => bulk("deleteDownloads")} />
+          <IconButton icon="migrate" label="Migrate" disabled={sel.size !== 1} onClick={() => nav(`/comics/migrate/${[...sel][0]}`)} />
+          <IconButton icon="trash" label="Remove from library" className="bad" disabled={!!busy} onClick={() => bulk("remove")} />
+        </nav>
+      )}
+      {toast && !check && <div className="toast" role="status">{toast}</div>}
       <Menu at={menu?.at} onClose={() => setMenu(null)} items={menu ? [
         { icon: "select", label: "Select", onClick: () => setSel(new Set([menu.m.id])) },
         { icon: "play", label: "Open", onClick: () => nav(`/comics/series/${menu.m.id}`) },
@@ -180,14 +207,13 @@ export default function ComicsLibrary() {
         { icon: "trash", label: "Remove from library", tone: "bad", onClick: async () => { await gql(M.setInLibrary, { id: menu.m.id, on: false }); all.reload(); } },
       ] : []} />
       <Sheet open={display} onClose={() => setDisplay(false)} title="Display">
-        <label className="search only-phone"><Icon name="search" size={16} className="muted" /><input placeholder="Search your library" value={q} onChange={(e) => setQ(e.target.value)} /></label>
         <label className="caps">Layout</label>
         <Segmented options={LAYOUTS} value={prefs.layout} onChange={(layout) => setPrefs({ layout })} label="Layout" />
         {prefs.layout !== "list" && <>
           <label className="caps">Covers per row{isPhone() ? " (this phone)" : " (wide screens)"}</label>
           {isPhone()
             ? <Segmented options={[2, 3, 4, 5].map((n) => ({ value: n, label: String(n) }))} value={prefs.cols?.phone || 3} onChange={(n) => setPrefs({ cols: { ...prefs.cols, phone: n } })} label="Covers per row" />
-            : <Segmented options={[{ value: 0, label: "Auto" }, ...[4, 5, 6, 7, 8].map((n) => ({ value: n, label: String(n) }))]} value={prefs.cols?.wide || 0} onChange={(n) => setPrefs({ cols: { ...prefs.cols, wide: n } })} label="Covers per row" />}
+            : <Segmented options={[{ value: 0, label: "Auto" }, ...[4, 5, 6, 7, 8, 9, 10].map((n) => ({ value: n, label: String(n) }))]} value={prefs.cols?.wide || 0} onChange={(n) => setPrefs({ cols: { ...prefs.cols, wide: n } })} label="Covers per row" />}
         </>}
         <label className="caps">Sort</label>
         <div className="chips wrap">{SORTS.map((o) => <Chip key={o.value} label={`${o.label}${prefs.sort === o.value ? (prefs.desc ? " ↓" : " ↑") : ""}`} active={prefs.sort === o.value}

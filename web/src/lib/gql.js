@@ -1,4 +1,5 @@
 // Suwayomi's GraphQL API, proxied at /suwayomi on the same origin (behind the same sign-in).
+import { forget } from "./api.js";
 // Query shapes follow Suwayomi-Server v2.x (checked against a live server's schema).
 const ENDPOINT = "/suwayomi/api/graphql";
 
@@ -8,7 +9,7 @@ export async function gql(query, variables = {}) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ query, variables }),
   });
-  if (res.status === 401) { location.reload(); throw new Error("Signed out."); }
+  if (res.status === 401) { forget(); location.reload(); throw new Error("Signed out."); }
   const body = await res.json().catch(() => null);
   if (!res.ok || !body) throw new Error(`The comics server isn't answering (${res.status}).`);
   if (body.errors?.length) throw new Error(body.errors[0].message);
@@ -54,8 +55,15 @@ export const Q = {
     ... on CheckBoxFilter { name cbDefault: default } ... on TriStateFilter { name tsDefault: default }
     ... on TextFilter { name txDefault: default } ... on SelectFilter { name selDefault: default values }
     ... on SortFilter { name values sortDefault: default { index ascending } }
-    ... on GroupFilter { name filters { __typename ... on CheckBoxFilter { name cbDefault: default } ... on TriStateFilter { name tsDefault: default } } } } } }`,
-  extensions: `{ extensions(order: [{ by: NAME }]) { nodes { pkgName name lang versionName iconUrl isInstalled hasUpdate isObsolete contentWarning } } }`,
+    ... on GroupFilter { name filters { __typename ... on CheckBoxFilter { name cbDefault: default } ... on TriStateFilter { name tsDefault: default } ... on SelectFilter { name selDefault: default values } } } } } }`,
+  extensions: `{ extensions(order: [{ by: NAME }]) { nodes { pkgName name lang versionName iconUrl isInstalled hasUpdate isObsolete contentWarning source { nodes { id displayName lang isConfigurable } } } } }`,
+  // Values are aliased per type: GraphQL won't merge same-named fields of different types across fragments.
+  sourcePrefs: `query($id: LongString!) { source(id: $id) { id displayName preferences { __typename
+    ... on SwitchPreference { key title summary visible enabled switchValue: currentValue }
+    ... on CheckBoxPreference { key title summary visible enabled checkValue: currentValue }
+    ... on ListPreference { key title summary visible enabled entries entryValues listValue: currentValue }
+    ... on MultiSelectListPreference { key title summary visible enabled entries entryValues multiValue: currentValue }
+    ... on EditTextPreference { key title summary visible enabled textValue: currentValue dialogMessage } } } }`,
   extensionStores: `{ extensionStores { nodes { indexUrl name } } }`,
   settings: `{ settings { excludeCompleted excludeNotStarted excludeUnreadChapters excludeEntryWithUnreadChapters autoDownloadNewChapters autoDownloadNewChaptersLimit autoDownloadIgnoreReUploads excludeCompleted excludeNotStarted excludeUnreadChapters
     excludeEntryWithUnreadChapters globalUpdateInterval updateMangas downloadAsCbz backupInterval backupTTL backupTime
@@ -66,6 +74,9 @@ export const Q = {
 };
 
 export const M = {
+  loginTrackerOAuth: `mutation($trackerId: Int!, $callbackUrl: String!) { loginTrackerOAuth(input: { trackerId: $trackerId, callbackUrl: $callbackUrl }) { isLoggedIn } }`,
+  loginTrackerCredentials: `mutation($trackerId: Int!, $username: String!, $password: String!) { loginTrackerCredentials(input: { trackerId: $trackerId, username: $username, password: $password }) { isLoggedIn } }`,
+  logoutTracker: `mutation($trackerId: Int!) { logoutTracker(input: { trackerId: $trackerId }) { tracker { id isLoggedIn } } }`,
   updateChapters: `mutation($ids: [Int!]!, $patch: UpdateChapterPatchInput!) { updateChapters(input: { ids: $ids, patch: $patch }) { chapters { id isRead isBookmarked lastPageRead } } }`,
   updateChapter: `mutation($id: Int!, $patch: UpdateChapterPatchInput!) { updateChapter(input: { id: $id, patch: $patch }) { chapter { id isRead lastPageRead } } }`,
   enqueue: `mutation($ids: [Int!]!) { enqueueChapterDownloads(input: { ids: $ids }) { downloadStatus { state } } }`,
@@ -87,6 +98,7 @@ export const M = {
   updateLibrary: `mutation($cats: [Int!]) { updateLibrary(input: { categories: $cats }) { updateStatus { jobsInfo { isRunning } } } }`,
   fetchSource: `mutation($source: LongString!, $type: FetchSourceMangaType!, $page: Int!, $query: String, $filters: [FilterChangeInput!]) {
     fetchSourceManga(input: { source: $source, type: $type, page: $page, query: $query, filters: $filters }) { hasNextPage mangas { ${MANGA_CARD} } } }`,
+  setSourcePref: `mutation($source: LongString!, $change: SourcePreferenceChangeInput!) { updateSourcePreference(input: { source: $source, change: $change }) { clientMutationId } }`,
   fetchExtensions: `mutation { fetchExtensions(input: {}) { extensions { pkgName } } }`,
   updateExtension: `mutation($id: String!, $patch: UpdateExtensionPatchInput!) { updateExtension(input: { id: $id, patch: $patch }) { extension { pkgName isInstalled hasUpdate } } }`,
   updateExtensions: `mutation($ids: [String!]!) { updateExtensions(input: { ids: $ids, patch: { update: true } }) { extensions { pkgName hasUpdate } } }`,

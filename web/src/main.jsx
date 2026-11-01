@@ -1,6 +1,6 @@
 import { StrictMode, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, RouterProvider, useRouteError } from "react-router-dom";
 import "../../styles/tokens.css";
 import "./styles/app.css";
 import { SettingsProvider } from "./lib/settings.js";
@@ -15,11 +15,17 @@ addEventListener("vite:preloadError", (e) => {
 });
 addEventListener("load", () => setTimeout(() => sessionStorage.removeItem("tachivel:reloaded"), 5000));
 function Crashed() {
+  // Only a code file missing after a redeploy means "updated"; anything else is a real fault, so say what it was.
+  const error = useRouteError();
+  const stale = /dynamically imported module|Importing a module script failed|error loading dynamically|preload/i.test(String(error?.message || error));
   return (
     <div className="empty" style={{ minHeight: "100vh", alignContent: "center" }}>
-      <h2>Tachivel was updated</h2>
-      <p>Reload to get the new version. Your place and library are safe.</p>
-      <Button kind="accent" icon="refresh" onClick={() => location.reload()}>Reload</Button>
+      <h2>{stale ? "Tachivel was updated" : "Something went wrong on this screen"}</h2>
+      <p>{stale ? "Reload to get the new version. Your place and library are safe." : `${error?.message || error}. Your place and library are safe.`}</p>
+      <div className="actions" style={{ justifyContent: "center" }}>
+        <Button kind="accent" icon="refresh" onClick={() => location.reload()}>Reload</Button>
+        {!stale && <Button onClick={() => { location.href = "/"; }}>Go home</Button>}
+      </div>
     </div>
   );
 }
@@ -47,6 +53,7 @@ const router = createBrowserRouter([
       { path: "/comics/search", element: page(() => import("./comics/GlobalSearch.jsx")) },
       { path: "/comics/migrate/:id", element: page(() => import("./comics/Migrate.jsx")) },
       { path: "/comics/more", element: page(() => import("./comics/More.jsx")) },
+      { path: "/tracker-oauth/:id", element: page(() => import("./settings/TrackerCallback.jsx")) },
       { path: "/settings", element: page(() => import("./settings/Settings.jsx")) },
       { path: "/settings/:section", element: page(() => import("./settings/Settings.jsx")) },
     ],

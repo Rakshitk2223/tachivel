@@ -1,11 +1,15 @@
-// Series page (Figma V2 / L9 / L10, phone P2 / M10 / M15): about, continue, chapter list with selection and download states.
+// Series page (Figma V2 / L9 / L10, phone P2 / M10 / M15), laid out like Mihon / Suwayomi-WebUI:
+// sticky app bar, about block, a "N chapters" row (filter & sort, download, select), long-press to select,
+// a bottom action bar while selecting, and a Continue button that stays within reach.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { gql, Q, M } from "../lib/gql.js";
-import { Button, Chip, Cover, ErrorNote, IconButton, Menu, Progress, Row, Sheet, Spinner, useLongPress, timeAgo, chapterLabel, friendlyError } from "../ui/kit.jsx";
+import { AppBar, Button, Chip, Cover, ErrorNote, IconButton, Menu, Progress, Row, Segmented, Sheet, Spinner, timeAgo, chapterLabel, friendlyError } from "../ui/kit.jsx";
 import { Icon } from "../ui/icons.jsx";
-import { useGql, useDownloads, chapterStatus, STATUS, num } from "./data.js";
+import { useGql, useDownloads, chapterStatus, STATUS, num, connectTracker } from "./data.js";
 import { CategorySheet } from "./Library.jsx";
+
+const FILTERS = [["all", "All"], ["new", "Unread"], ["server", "Downloaded"], ["bookmarked", "Bookmarked"]];
 
 export default function Series() {
   const { id } = useParams();
@@ -14,18 +18,45 @@ export default function Series() {
   const manga = useGql(Q.manga, { id: mid }, [mid]);
   const chapters = useGql(Q.chapters, { id: mid }, [mid]);
   const cats = useGql(Q.categories);
+  const trackers = useGql(Q.trackers);
   const dl = useDownloads();
   const [filter, setFilter] = useState("all");
-  const [oldestFirst, setOldestFirst] = useState(false);
+  const [order, setOrder] = useState("new");
   const [sel, setSel] = useState(null);
   const [menu, setMenu] = useState(null);
   const [more, setMore] = useState(null);
-  const [sheet, setSheet] = useState(null); // "categories" | "tracking"
+  const [dlMenu, setDlMenu] = useState(null);
+  const [sheet, setSheet] = useState(null); // "categories" | "tracking" | "filter"
   const [refreshing, setRefreshing] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [showTitle, setShowTitle] = useState(false);
+  const [toast, setToast] = useState("");
+  const toastTimer = useRef();
 
   const m = manga.data?.manga;
+  const all = chapters.data?.chapters.nodes || [];
+  const list = useMemo(() => {
+    let l = all;
+    if (filter === "new") l = l.filter((c) => !c.isRead);
+    if (filter === "server") l = l.filter((c) => c.isDownloaded);
+    if (filter === "bookmarked") l = l.filter((c) => c.isBookmarked);
+    return order === "old" ? [...l].reverse() : l;
+  }, [all, filter, order]);
+  const readCount = all.filter((c) => c.isRead).length;
+  const asc = useMemo(() => [...all].reverse(), [all]);
+  // Continue: a chapter you're partway through, else the first unread after the last one you read.
+  const resume = useMemo(() => {
+    const partway = asc.find((c) => !c.isRead && c.lastPageRead > 0);
+    if (partway) return partway;
+    const lastRead = asc.map((c) => c.isRead).lastIndexOf(true);
+    return asc[lastRead + 1] || asc.find((c) => !c.isRead) || null;
+  }, [asc]);
+
+  const say = (t) => { setToast(t); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(""), 3000); };
+  async function refresh() {
+    setRefreshing(true);
+    try { await gql(M.refreshManga, { id: mid }); await Promise.all([manga.reload(), chapters.reload()]); } catch (e) { say(friendlyError(e)); } finally { setRefreshing(false); }
+  }
   // A series whose chapter list never came from the source (e.g. restored from a backup) fetches it once, by itself.
   const autoFetched = useRef(false);
   useEffect(() => {
@@ -33,123 +64,142 @@ export default function Series() {
     autoFetched.current = true;
     refresh();
   }, [m]); // eslint-disable-line react-hooks/exhaustive-deps
-  const all = chapters.data?.chapters.nodes || [];
-  const list = useMemo(() => {
-    let l = all;
-    if (filter === "new") l = l.filter((c) => !c.isRead);
-    if (filter === "server") l = l.filter((c) => c.isDownloaded);
-    if (filter === "bookmarked") l = l.filter((c) => c.isBookmarked);
-    return oldestFirst ? [...l].reverse() : l;
-  }, [all, filter, oldestFirst]);
-  const readCount = all.filter((c) => c.isRead).length;
-  // Continue: the oldest unread chapter after the last one you read (chapters come newest first).
-  const next = useMemo(() => { const asc = [...all].reverse(); const lastRead = asc.map((c) => c.isRead).lastIndexOf(true); return asc[lastRead + 1] || asc.find((c) => !c.isRead) || asc[asc.length - 1]; }, [all]);
-  const inProgress = all.find((c) => !c.isRead && c.lastPageRead > 0);
-  const resume = inProgress || next;
 
-  async function refresh() {
-    setRefreshing(true);
-    try { await gql(M.refreshManga, { id: mid }); manga.reload(); chapters.reload(); } catch (e) { alert(friendlyError(e)); } finally { setRefreshing(false); }
-  }
-  const run = async (query, vars) => { await gql(query, vars).catch((e) => alert(e.message)); chapters.reload(); manga.reload(); dl.refresh(); };
-  const enqueue = (ids) => { gql(M.enqueue, { ids }).catch(() => {}); setTimeout(() => dl.refresh(), 800); };
+  const run = async (query, vars, done) => { try { await gql(query, vars); if (done) say(done); } catch (e) { say(friendlyError(e)); } chapters.reload(); manga.reload(); dl.refresh(); };
+  const enqueue = (ids) => {
+    if (!ids.length) { say("Nothing left to download."); return; }
+    gql(M.enqueue, { ids }).catch(() => {});
+    say(`Queued ${ids.length} chapter${ids.length === 1 ? "" : "s"} for download.`);
+    setTimeout(() => dl.refresh(), 800);
+  };
   const toggle = (cid) => setSel((s) => { const n = new Set(s); n.has(cid) ? n.delete(cid) : n.add(cid); return n.size ? n : null; });
-  const markBelow = (c) => { const idx = all.findIndex((x) => x.id === c.id); run(M.updateChapters, { ids: all.slice(idx).filter((x) => !x.isRead).map((x) => x.id), patch: { isRead: true } }); };
+  const toDownload = asc.filter((c) => !c.isRead && !c.isDownloaded);
+  const selected = sel ? all.filter((c) => sel.has(c.id)) : [];
+  const selIds = selected.map((c) => c.id);
+  const allBookmarked = selected.length > 0 && selected.every((c) => c.isBookmarked);
+  const markPrevious = (c) => { const i = asc.findIndex((x) => x.id === c.id); return run(M.updateChapters, { ids: asc.slice(0, i).filter((x) => !x.isRead).map((x) => x.id), patch: { isRead: true } }, "Marked the earlier chapters read."); };
+  const act = (fn) => () => { fn(); setSel(null); };
+  // Tracking only shows up once a tracker is signed in on the comics server (or this series is already linked).
+  const tracking = (trackers.data?.trackers.nodes || []).some((t) => t.isLoggedIn) || (m?.trackRecords?.nodes || []).length > 0;
+  const anchor = (e, w) => { const r = e.currentTarget.getBoundingClientRect(); return { x: Math.max(8, r.right - w), y: r.bottom + 4 }; };
 
-  if (manga.error) return <div className="page"><ErrorNote error={manga.error} onRetry={manga.reload} /></div>;
-  if (!m) return <Spinner />;
+  if (manga.error && !m) return <div className="page"><AppBar title="Series" /><ErrorNote error={manga.error} onRetry={manga.reload} /></div>;
+  if (!m) return <div className="page"><AppBar title="" /><Spinner /></div>;
 
   return (
-    <div className="page">
+    <div className={`page series-page${sel ? " selecting" : ""}`}>
+      {sel ? (
+        <AppBar back={false} title={`${sel.size} selected`} actions={<>
+          <IconButton icon="select" label="Select all" onClick={() => setSel(new Set(list.map((c) => c.id)))} />
+          <IconButton icon="invert" label="Invert selection" onClick={() => setSel((s) => { const n = new Set(list.filter((c) => !s.has(c.id)).map((c) => c.id)); return n.size ? n : null; })} />
+          <IconButton icon="close" label="Stop selecting" onClick={() => setSel(null)} />
+        </>} />
+      ) : (
+        <AppBar title={m.title} actions={<>
+          <IconButton icon="refresh" label="Refresh from source" className={refreshing ? "spinning" : ""} disabled={refreshing} onClick={refresh} />
+          <IconButton icon="more" label="More" onClick={(e) => setMore(anchor(e, 260))} />
+        </>} />
+      )}
+
       <div className="series">
         <aside className="series-about">
-          <button type="button" className="row-sub actions" onClick={() => nav(-1)}><Icon name="back" size={18} />Back</button>
           <div className="series-head">
             <Cover src={m.thumbnailUrl} title={m.title} />
             <div className="series-title">
               <h1 className={`${m.title.length > 40 ? "long" : ""}${showTitle ? " open" : ""}`} onClick={() => setShowTitle(!showTitle)} title={m.title}>{m.title}</h1>
-              <p className="sub">{[m.source?.displayName, STATUS[m.status], m.author].filter(Boolean).join(" · ")}</p>
+              <p className="sub">{[m.author, STATUS[m.status], m.source?.displayName].filter(Boolean).join(" · ")}</p>
+              {!m.inLibrary && <div className="actions"><Button kind="accent" small icon="plus" onClick={() => run(M.setInLibrary, { id: mid, on: true }, "Added to your library.")}>Add to library</Button></div>}
             </div>
           </div>
-          {all.length > 0 && <div style={{ display: "grid", gap: 8 }}><Progress value={readCount / all.length} /><p className="sub">Read {readCount} of {all.length} · {m.unreadCount} new · {m.downloadCount} on the server</p></div>}
-          <div className="hero-actions">
-            {resume && <Button kind="accent" icon="play" onClick={() => nav(`/comics/read/${resume.id}`)}>{readCount ? "Continue" : "Start"} · Ch {num(resume.chapterNumber)}</Button>}
-            {!m.inLibrary && <Button kind="accent" icon="plus" onClick={() => run(M.setInLibrary, { id: mid, on: true })}>Add to library</Button>}
-            <Button icon="down" onClick={() => enqueue([...all].reverse().filter((c) => !c.isRead && !c.isDownloaded).slice(0, 10).map((c) => c.id))}>Next 10</Button>
-            <IconButton icon="more" label="More" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setMore({ x: r.left, y: r.bottom + 4 }); }} />
-          </div>
+          {all.length > 0 && <div className="series-progress"><Progress value={readCount / all.length} /><p className="sub">Read {readCount} of {all.length} · {m.unreadCount} unread · {m.downloadCount} downloaded</p></div>}
+          {resume && <Button kind="accent" icon="play" className="hide-phone" onClick={() => nav(`/comics/read/${resume.id}`)}>{readCount ? "Continue" : "Start"} · Ch {num(resume.chapterNumber)}</Button>}
           {m.genre?.length > 0 && <div className="chips wrap genres">{m.genre.slice(0, 12).map((g) => <button type="button" key={g} className="chip tag" title={`Search ${m.source?.displayName || "this source"} for ${g}`}
             onClick={() => nav(m.source?.id ? `/comics/source/${m.source.id}?q=${encodeURIComponent(g)}` : `/comics/search?q=${encodeURIComponent(g)}`)}>{g}</button>)}</div>}
-          {m.description && <p className="sub" style={showAll ? {} : { display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }} onClick={() => setShowAll(!showAll)}>{m.description}</p>}
+          {m.description && <p className={`sub series-desc${showAll ? " open" : ""}`} onClick={() => setShowAll(!showAll)}>{m.description}</p>}
         </aside>
 
-        <section style={{ display: "grid", gap: 12, minWidth: 0 }}>
-          {sel ? (
-            <div className="selbar">
-              <IconButton icon="close" label="Stop selecting" onClick={() => setSel(null)} />
-              <b>{sel.size} selected</b>
-              <button type="button" className="muted" onClick={() => setSel(new Set(list.filter((c) => !c.isRead).map((c) => c.id)))}>Select all new</button>
-              <span className="grow" />
-              <Button small icon="check" onClick={() => { run(M.updateChapters, { ids: [...sel], patch: { isRead: true } }); setSel(null); }}>Mark read</Button>
-              <Button small icon="bookmark" className="hide-phone" onClick={() => { run(M.updateChapters, { ids: [...sel], patch: { isBookmarked: true } }); setSel(null); }}>Bookmark</Button>
-              <Button small icon="trash" className="hide-phone" onClick={() => { run(M.deleteDownloads, { ids: [...sel] }); setSel(null); }}>Delete downloads</Button>
-              <Button small kind="accent" icon="down" onClick={() => { enqueue([...sel]); setSel(null); }}>Download {sel.size}</Button>
-            </div>
-          ) : (
-            <div className="chips">
-              <Chip label="All" count={all.length} active={filter === "all"} onClick={() => setFilter("all")} />
-              <Chip label="New" count={m.unreadCount} active={filter === "new"} onClick={() => setFilter("new")} />
-              <Chip label="On the server" count={m.downloadCount} active={filter === "server"} onClick={() => setFilter("server")} />
-              <Chip label="Bookmarked" active={filter === "bookmarked"} onClick={() => setFilter("bookmarked")} />
-              <span style={{ flex: 1 }} />
-              <button type="button" className="sub" onClick={() => setOldestFirst(!oldestFirst)}>{oldestFirst ? "Oldest first" : "Newest first"}</button>
-              <IconButton icon="select" label="Select chapters" onClick={() => setSel(new Set())} />
-            </div>
-          )}
+        <section className="series-chapters">
+          <div className="chapters-head">
+            <b>{list.length === all.length ? `${all.length} chapter${all.length === 1 ? "" : "s"}` : `${list.length} of ${all.length} chapters`}</b>
+            <span className="grow" />
+            <IconButton icon="filter" label="Filter and sort" active={filter !== "all" || order === "old"} onClick={() => setSheet("filter")} />
+            <IconButton icon="down" label="Download" onClick={(e) => setDlMenu(anchor(e, 240))} />
+            <IconButton icon="select" label="Select chapters" onClick={() => setSel(new Set())} />
+          </div>
           {chapters.loading && !chapters.data ? <Spinner /> : !all.length ? (
-            <div className="note"><Icon name="info" /><span>No chapters yet. Refresh from the source to fetch them.</span><Button small icon="refresh" disabled={refreshing} onClick={refresh}>{refreshing ? "Fetching…" : "Refresh"}</Button></div>
-          ) : (
-            <div style={{ display: "grid", gap: 2 }}>
+            <div className="note"><Icon name="info" /><span>{refreshing ? "Getting the chapter list from the source…" : "No chapters yet. Refresh from the source to fetch them."}</span>{!refreshing && <Button small icon="refresh" onClick={refresh}>Refresh</Button>}</div>
+          ) : !list.length ? <p className="sub">No chapters match this filter.</p> : (
+            <div className="chapter-list">
               {list.map((c) => <Chapter key={c.id} c={c} q={dl.byChapter[c.id]} sel={sel} source={m.source?.displayName}
-                onOpen={() => (sel ? toggle(c.id) : nav(`/comics/read/${c.id}`))} onMenu={(at) => setMenu({ at, c })} onCheck={() => toggle(c.id)} onDownload={() => enqueue([c.id])} />)}
+                onOpen={() => (sel ? toggle(c.id) : nav(`/comics/read/${c.id}`))} onSelect={() => setSel((s) => new Set([...(s || []), c.id]))}
+                onMenu={(at) => setMenu({ at, c })} onDownload={() => enqueue([c.id])} />)}
             </div>
           )}
         </section>
       </div>
 
+      {sel && (
+        <nav className="action-bar" aria-label="Selected chapters">
+          <IconButton icon="down" label="Download" disabled={!sel.size} onClick={act(() => enqueue(selected.filter((c) => !c.isDownloaded).map((c) => c.id)))} />
+          <IconButton icon="check" label="Mark read" disabled={!sel.size} onClick={act(() => run(M.updateChapters, { ids: selIds, patch: { isRead: true } }, "Marked read."))} />
+          <IconButton icon="incognito" label="Mark unread" disabled={!sel.size} onClick={act(() => run(M.updateChapters, { ids: selIds, patch: { isRead: false, lastPageRead: 0 } }, "Marked unread."))} />
+          <IconButton icon="bookmark" label={allBookmarked ? "Remove bookmark" : "Bookmark"} active={allBookmarked} disabled={!sel.size} onClick={act(() => run(M.updateChapters, { ids: selIds, patch: { isBookmarked: !allBookmarked } }))} />
+          <IconButton icon="trash" label="Delete downloads" disabled={!selected.some((c) => c.isDownloaded)} onClick={act(() => run(M.deleteDownloads, { ids: selected.filter((c) => c.isDownloaded).map((c) => c.id) }, "Deleted the downloads."))} />
+          <IconButton icon="history" label="Mark everything before it read" disabled={sel.size !== 1} onClick={act(() => markPrevious(selected[0]))} />
+        </nav>
+      )}
+      {!sel && resume && <button type="button" className="fab only-phone" onClick={() => nav(`/comics/read/${resume.id}`)}><Icon name="play" size={16} />{readCount ? "Continue" : "Start"} · Ch {num(resume.chapterNumber)}</button>}
+      {toast && <div className="toast" role="status">{toast}</div>}
+
       <Menu at={menu?.at} onClose={() => setMenu(null)} items={menu ? [
         { icon: "play", label: "Read", onClick: () => nav(`/comics/read/${menu.c.id}`) },
+        { icon: "select", label: "Select", onClick: () => setSel(new Set([menu.c.id])) },
         !menu.c.isDownloaded && { icon: "down", label: "Download", onClick: () => enqueue([menu.c.id]) },
         { icon: "bookmark", label: menu.c.isBookmarked ? "Remove bookmark" : "Bookmark", onClick: () => run(M.updateChapters, { ids: [menu.c.id], patch: { isBookmarked: !menu.c.isBookmarked } }) },
-        { icon: "check", label: menu.c.isRead ? "Mark as unread" : "Mark as read", onClick: () => run(M.updateChapters, { ids: [menu.c.id], patch: { isRead: !menu.c.isRead } }) },
-        { icon: "check", label: "Mark everything below as read", onClick: () => markBelow(menu.c) },
-        { icon: "select", label: "Select", onClick: () => setSel(new Set([menu.c.id])) },
+        { icon: "check", label: menu.c.isRead ? "Mark as unread" : "Mark as read", onClick: () => run(M.updateChapters, { ids: [menu.c.id], patch: menu.c.isRead ? { isRead: false, lastPageRead: 0 } : { isRead: true } }) },
+        { icon: "history", label: "Mark everything before it read", onClick: () => markPrevious(menu.c) },
         menu.c.isDownloaded && { icon: "trash", label: "Delete download", onClick: () => run(M.deleteDownloads, { ids: [menu.c.id] }) },
-        m.realUrl && { icon: "external", label: "Open in browser", onClick: () => window.open(m.realUrl, "_blank", "noopener") },
       ] : []} />
-      <Menu at={more} onClose={() => setMore(null)} items={[
-        { icon: "refresh", label: refreshing ? "Refreshing…" : "Refresh from source", onClick: refresh },
-        { icon: "tag", label: "Edit categories", onClick: () => setSheet("categories") },
-        { icon: "link", label: "Tracking", onClick: () => setSheet("tracking") },
-        { icon: "migrate", label: "Migrate", onClick: () => nav(`/comics/migrate/${mid}`) },
-        m.realUrl && { icon: "external", label: "Open in browser", onClick: () => window.open(m.realUrl, "_blank", "noopener") },
-        m.inLibrary && { icon: "trash", label: "Remove from library", tone: "bad", onClick: () => run(M.setInLibrary, { id: mid, on: false }) },
+      <Menu at={dlMenu} onClose={() => setDlMenu(null)} items={[
+        ...[1, 5, 10, 25].map((n) => ({ icon: "down", label: n === 1 ? "Next chapter" : `Next ${n} unread`, onClick: () => enqueue(toDownload.slice(0, n).map((c) => c.id)) })),
+        { icon: "down", label: `All unread (${toDownload.length})`, onClick: () => enqueue(toDownload.map((c) => c.id)) },
+        { icon: "down", label: "Every chapter", onClick: () => enqueue(asc.filter((c) => !c.isDownloaded).map((c) => c.id)) },
       ]} />
+      <Menu at={more} onClose={() => setMore(null)} items={[
+        { icon: "tag", label: "Edit categories", onClick: () => setSheet("categories") },
+        tracking && { icon: "link", label: "Tracking", onClick: () => setSheet("tracking") },
+        { icon: "migrate", label: "Migrate to another source", onClick: () => nav(`/comics/migrate/${mid}`) },
+        { icon: "check", label: "Mark all as read", onClick: () => run(M.updateChapters, { ids: all.filter((c) => !c.isRead).map((c) => c.id), patch: { isRead: true } }, "Marked all as read.") },
+        m.realUrl && { icon: "external", label: "Open in browser", onClick: () => window.open(m.realUrl, "_blank", "noopener") },
+        m.inLibrary && { icon: "trash", label: "Remove from library", tone: "bad", onClick: () => run(M.setInLibrary, { id: mid, on: false }, "Removed from your library.") },
+      ]} />
+      <Sheet open={sheet === "filter"} onClose={() => setSheet(null)} title="Chapters">
+        <label className="caps">Show</label>
+        <div className="chips wrap">{FILTERS.map(([v, l]) => <Chip key={v} label={l} active={filter === v} onClick={() => setFilter(v)}
+          count={v === "all" ? all.length : v === "new" ? m.unreadCount : v === "server" ? m.downloadCount : all.filter((c) => c.isBookmarked).length} />)}</div>
+        <label className="caps">Order</label>
+        <Segmented options={[{ value: "new", label: "Newest first" }, { value: "old", label: "Oldest first" }]} value={order} onChange={setOrder} label="Order" />
+      </Sheet>
       <CategorySheet open={sheet === "categories"} onClose={() => setSheet(null)} ids={[mid]} categories={(cats.data?.categories.nodes || []).filter((c) => !c.default)}
         membership={Object.fromEntries(m.categories.nodes.map((c) => [c.id, 1]))} onDone={() => { setSheet(null); manga.reload(); }} />
-      <TrackingSheet open={sheet === "tracking"} onClose={() => setSheet(null)} records={m.trackRecords?.nodes || []} />
+      <TrackingSheet open={sheet === "tracking"} onClose={() => setSheet(null)} trackers={trackers.data?.trackers.nodes || []} records={m.trackRecords?.nodes || []} />
     </div>
   );
 }
 
-function Chapter({ c, q, sel, source, onOpen, onMenu, onCheck, onDownload }) {
-  const lp = useLongPress(onMenu);
+// Touch: a long press starts selecting. Mouse: right-click opens the chapter menu.
+function Chapter({ c, q, sel, source, onOpen, onSelect, onMenu, onDownload }) {
   const st = chapterStatus(c, q);
+  const timer = useRef(null), held = useRef(false);
   const progress = !c.isRead && c.lastPageRead > 0 && c.pageCount > 0 ? ` · page ${c.lastPageRead + 1} of ${c.pageCount}` : "";
+  const isSel = sel?.has(c.id);
   return (
-    <div className={`chapter${sel?.has(c.id) ? " sel" : ""}${c.isRead ? " read" : ""}`} {...lp}>
-      {sel && <button type="button" className={`check${sel.has(c.id) ? " on" : ""}`} aria-label="Select" onClick={onCheck}>{sel.has(c.id) && <Icon name="check" size={14} />}</button>}
-      <button type="button" className="row-text" style={{ textAlign: "left" }} onClick={onOpen}>
+    <div className={`chapter${isSel ? " sel" : ""}${c.isRead ? " read" : ""}`}
+      onTouchStart={() => { held.current = false; timer.current = setTimeout(() => { held.current = true; onSelect(); }, 450); }}
+      onTouchMove={() => clearTimeout(timer.current)} onTouchEnd={() => clearTimeout(timer.current)}
+      onContextMenu={(e) => { e.preventDefault(); if (!held.current) onMenu({ x: e.clientX, y: e.clientY }); }}>
+      {sel && <span className={`check${isSel ? " on" : ""}`} aria-hidden>{isSel && <Icon name="check" size={14} />}</span>}
+      <button type="button" className="chapter-hit" onClick={() => { if (held.current) { held.current = false; return; } onOpen(); }}>
         <span className="row-title">{c.isBookmarked && <Icon name="bookmark" size={14} className="accent" />} {chapterLabel(c)}</span>
         <span className="row-sub">{[c.scanlator || source, timeAgo(c.uploadDate)].filter(Boolean).join(" · ")}{progress}</span>
       </button>
@@ -160,14 +210,14 @@ function Chapter({ c, q, sel, source, onOpen, onMenu, onCheck, onDownload }) {
   );
 }
 
-function TrackingSheet({ open, onClose, records }) {
-  const trackers = useGql(Q.trackers, {}, [open]);
+function TrackingSheet({ open, onClose, trackers, records }) {
+  const nav = useNavigate();
   return (
     <Sheet open={open} onClose={onClose} title="Tracking">
-      {(trackers.data?.trackers.nodes || []).map((t) => {
+      {trackers.map((t) => {
         const rec = records.find((r) => r.trackerId === t.id);
         return <Row key={t.id} mono={t.name.slice(0, 2).toUpperCase()} title={t.name} sub={rec ? `${rec.title} · read ${rec.lastChapterRead}` : t.isLoggedIn ? "Signed in · not linked to this series" : "Not signed in"}
-          button={t.isLoggedIn ? undefined : "Sign in"} onButton={() => t.authUrl && window.open(t.authUrl, "_blank", "noopener")} />;
+          button={t.isLoggedIn ? undefined : "Sign in"} onButton={() => (t.authUrl ? connectTracker(t) : nav("/settings/tracking"))} />;
       })}
       <p className="sub">Optional. Tracking sends your chapter count to these sites; Tachivel works fine without it.</p>
     </Sheet>

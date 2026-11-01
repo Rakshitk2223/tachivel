@@ -3,11 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { THEMES, useSettings } from "../lib/settings.js";
-import { api, useLoad } from "../lib/api.js";
+import { api, forget, useLoad } from "../lib/api.js";
 import { gql, gqlUpload, Q, M } from "../lib/gql.js";
-import { Button, Caps, Chip, ErrorNote, Group, IconButton, Row, Segmented, Spinner } from "../ui/kit.jsx";
+import { AppBar, Button, Caps, Chip, ErrorNote, Group, IconButton, Row, Segmented, Sheet, Spinner } from "../ui/kit.jsx";
 import { Icon } from "../ui/icons.jsx";
-import { useGql, useComicPrefs, READER_DEFAULTS } from "../comics/data.js";
+import { useGql, useComicPrefs, READER_DEFAULTS, connectTracker } from "../comics/data.js";
 import { StorageMeter } from "../comics/Downloads.jsx";
 import { LangSheet } from "../comics/Browse.jsx";
 
@@ -27,7 +27,7 @@ export default function Settings() {
         {SECTIONS.map(([id, label, icon]) => <Row key={id} icon={icon} iconTone={current === id ? "accent" : ""} title={label} selected={current === id} chevron={!wide} onClick={() => nav(`/settings/${id}`)} />)}
       </nav>
       <div className="settings-body">
-        <div className="page-head only-phone"><IconButton icon="back" label="All settings" onClick={() => nav("/settings")} /></div>
+        {!wide && section && <AppBar title={SECTIONS.find(([id]) => id === section)?.[1] || "Settings"} onBack={() => nav("/settings")} />}
         {Body && <Body />}
       </div>
     </div>
@@ -136,6 +136,7 @@ function Reader() {
         {seg("Reading mode", null, "mode", [{ value: "webtoon", label: "Webtoon" }, { value: "ltr", label: "Left → right" }, { value: "rtl", label: "Right → left" }])}
         {seg("Two pages side by side", "On wide screens like the iPad in landscape", "spread", [{ value: "off", label: "Off" }, { value: "auto", label: "Wide screens" }, { value: "on", label: "On" }])}
         {seg("Page fit", null, "fit", [{ value: "screen", label: "Screen" }, { value: "width", label: "Width" }])}
+        {seg("Tap zones", "Where a tap turns the page", "zones", [{ value: "edges", label: "Edges" }, { value: "lshape", label: "L-shape" }, { value: "kindle", label: "Kindle" }, { value: "off", label: "Off" }])}
         <div className="seg-row"><span className="row-text"><span className="row-title">Save ahead on this device</span><span className="row-sub">The next chapters download to this device while you read, so pages open instantly and work offline</span></span>
           <Segmented options={[{ value: 0, label: "Off" }, { value: 1, label: "1" }, { value: 3, label: "3" }, { value: 5, label: "5" }]} value={prefs.saveAhead} onChange={(saveAhead) => setPrefs({ saveAhead })} /></div>
         <Row title="Incognito on this device" sub="Reading here doesn't change history or progress" toggle={prefs.incognito} onToggle={(incognito) => setPrefs({ incognito })} />
@@ -188,15 +189,36 @@ function Browse() {
 
 function Tracking() {
   const t = useGql(Q.trackers);
+  const [login, setLogin] = useState(null); // a tracker that signs in with a username and password (Kitsu)
+  const [form, setForm] = useState({ username: "", password: "" });
+  const [error, setError] = useState(null);
+  const signIn = async () => {
+    setError(null);
+    try {
+      const r = await gql(M.loginTrackerCredentials, { trackerId: login.id, ...form });
+      if (!r.loginTrackerCredentials?.isLoggedIn) throw new Error(`${login.name} didn't accept that username and password.`);
+      setLogin(null); setForm({ username: "", password: "" }); t.reload();
+    } catch (e) { setError(e); }
+  };
   return (
     <>
       <h3>Tracking</h3>
-      <p className="sub">Optional. Tracking sends your chapter count to these sites; Tachivel works fine without it. Signing in opens the site, then returns to the comics server.</p>
+      <p className="sub">Optional. Tracking sends your chapter count to these sites; Tachivel works fine without it. Signing in opens the site, then brings you back here.</p>
       <ErrorNote error={t.error} onRetry={t.reload} />
       <Group>
-        {(t.data?.trackers.nodes || []).map((x) => <Row key={x.id} mono={x.name.slice(0, 2).toUpperCase()} title={x.name} sub={x.isLoggedIn ? "Signed in" : "Not signed in"} valueTone="ok"
-          button={x.isLoggedIn ? undefined : "Connect"} onButton={() => x.authUrl && window.open(x.authUrl, "_blank", "noopener")} value={x.isLoggedIn ? "Connected" : undefined} />)}
+        {(t.data?.trackers.nodes || []).map((x) => <Row key={x.id} mono={x.name.slice(0, 2).toUpperCase()} title={x.name} sub={x.isLoggedIn ? "Connected" : "Not signed in"}
+          button={x.isLoggedIn ? "Sign out" : "Connect"} buttonKind={x.isLoggedIn ? "ghost" : "outline"}
+          onButton={() => (x.isLoggedIn ? gql(M.logoutTracker, { trackerId: x.id }).then(t.reload) : x.authUrl ? connectTracker(x) : setLogin(x))} />)}
       </Group>
+      <Sheet open={!!login} onClose={() => setLogin(null)} title={login ? `Sign in to ${login.name}` : ""} actions={<>
+        <Button kind="ghost" onClick={() => setLogin(null)}>Cancel</Button>
+        <Button kind="accent" disabled={!form.username || !form.password} onClick={signIn}>Sign in</Button>
+      </>}>
+        <input className="field" placeholder="Email or username" autoComplete="username" autoCapitalize="none" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+        <input className="field" type="password" placeholder="Password" autoComplete="current-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+        <ErrorNote error={error} />
+        <p className="sub">Sent once to the comics server, which keeps only the sign-in token.</p>
+      </Sheet>
     </>
   );
 }
@@ -345,7 +367,7 @@ function About() {
       <Group>
         <Row title="Tachivel" value="v2.0" />
         <Row title="Signed in as" value={me.data?.user || "…"} />
-        <Row icon="external" title="Sign out" tone="bad" onClick={() => { location.href = "https://auth.rakshiit.me/logout"; }} />
+        <Row icon="external" title="Sign out" sub="Also clears the library cached on this device" tone="bad" onClick={() => { forget(); try { localStorage.removeItem("tachivel:settings"); } catch {} location.href = "https://auth.rakshiit.me/logout"; }} />
       </Group>
     </>
   );

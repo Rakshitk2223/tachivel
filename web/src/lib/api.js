@@ -10,7 +10,7 @@ async function call(method, path, body, raw = false) {
     body: raw ? body : body ? JSON.stringify(body) : undefined,
   });
   // The sign-in sits in front of the whole site; a 401 here means it expired, so go back through it.
-  if (res.status === 401) { location.reload(); throw new SignedOut(); }
+  if (res.status === 401) { forget(); location.reload(); throw new SignedOut(); }
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error(data?.error || `The server said no (${res.status}).`);
   return data;
@@ -78,5 +78,12 @@ export function useLoad(loader, deps = [], key = null) {
   useEffect(() => { run(); }, [run]);
   // Pull-to-refresh (Shell) asks every screen on show to fetch again.
   useEffect(() => { addEventListener("tachivel:pull", run); return () => removeEventListener("tachivel:pull", run); }, [run]);
+  // Coming back to the app (e.g. after reading on the other device) fetches again, so places are never stale on return.
+  useEffect(() => {
+    let hiddenAt = 0;
+    const onVis = () => { if (document.hidden) hiddenAt = Date.now(); else if (hiddenAt && Date.now() - hiddenAt > 3000) run(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [run]);
   return { ...state, reload: run, setData: (data) => set((s) => { const next = typeof data === "function" ? data(s.data) : data; remember(key, next); return { ...s, data: next }; }) };
 }

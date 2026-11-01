@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { gql, Q, M } from "../lib/gql.js";
-import { Chip, ComicCard, IconButton, Spinner } from "../ui/kit.jsx";
+import { AppBar, Chip, ComicCard, IconButton, Spinner } from "../ui/kit.jsx";
 import { Icon } from "../ui/icons.jsx";
 import { useComicPrefs, STATUS } from "./data.js";
 import { shown } from "./Browse.jsx";
@@ -41,8 +41,8 @@ export default function GlobalSearch() {
   const entries = Object.entries(results).filter(([, r]) => !onlyHits || r.state !== "done" || r.items.length);
   return (
     <div className="page">
+      <AppBar title="Search all sources" />
       <div className="page-head">
-        <IconButton icon="back" label="Back" onClick={() => nav(-1)} />
         <form className="search grow" style={{ maxWidth: 560 }} onSubmit={(e) => { e.preventDefault(); setParams({ q: input.trim() }); }}>
           <Icon name="search" size={16} className="muted" /><input autoFocus placeholder="Search every source" value={input} onChange={(e) => setInput(e.target.value)} enterKeyHint="search" />
         </form>

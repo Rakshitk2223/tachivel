@@ -7,6 +7,21 @@ import { Button, IconButton, Row, Segmented, Spinner, chapterLabel, friendlyErro
 import { Icon } from "../ui/icons.jsx";
 import { useComicPrefs, readReaderPrefs, readerPrefsKey, num } from "./data.js";
 
+// Tap zones, like Mihon: where a tap lands (x, y from 0 to 1) decides previous, next or the menu.
+export const ZONES = {
+  edges: (x) => (x < 1 / 3 ? "prev" : x > 2 / 3 ? "next" : "menu"),
+  lshape: (x, y) => (y < 1 / 3 || (y < 2 / 3 && x < 1 / 3) ? "prev" : y > 2 / 3 || x > 2 / 3 ? "next" : "menu"),
+  kindle: (x, y) => (y < 1 / 3 ? "menu" : x < 1 / 3 ? "prev" : "next"),
+  off: () => "menu",
+};
+const zoneAt = (prefs, rtl, x, y) => {
+  const inv = prefs.invert || "none";
+  if (rtl !== (inv === "h" || inv === "both")) x = 1 - x; // right-to-left reads the other way round
+  if (inv === "v" || inv === "both") y = 1 - y;
+  return (ZONES[prefs.zones] || ZONES.edges)(x, y);
+};
+const MODES = [["webtoon", "Webtoon", "webtoon"], ["ltr", "Left → right", "paged"], ["rtl", "Right → left", "paged"]];
+
 const pagesFor = async (chapterId) => (await gql(M.pages, { id: chapterId })).fetchChapterPages.pages.map(media);
 
 // Warm the next chapters into this device's cache (the service worker keeps page images), so they open instantly and offline.
@@ -31,6 +46,8 @@ export default function Reader() {
   const [page, setPage] = useState(0);
   const [prefs, setPrefs] = useState(null);
   const [ahead, setAhead] = useState("");
+  const [hint, setHint] = useState(false);
+  const [flash, setFlash] = useState("");
   const scroller = useRef(null);
   const saveTimer = useRef();
   // Which chapter the loaded pages belong to. Saving waits for this to match, so arriving at the next
@@ -96,10 +113,16 @@ export default function Reader() {
   useEffect(() => {
     if (!total || comicPrefs.incognito || loadedFor !== cid) return;
     clearTimeout(saveTimer.current);
-    const done = page >= total - 1;
-    saveTimer.current = setTimeout(() => gql(M.updateChapter, { id: cid, patch: done ? { isRead: true, lastPageRead: page } : { lastPageRead: page } }).catch(() => {}), done ? 0 : 1200);
+    const done = page >= total - 1, at = Math.min(page, total - 1);
+    saveTimer.current = setTimeout(() => gql(M.updateChapter, { id: cid, patch: done ? { isRead: true, lastPageRead: at } : { lastPageRead: at } }).catch(() => {}), done ? 0 : 1200);
     return () => clearTimeout(saveTimer.current);
   }, [page, total, cid, loadedFor, comicPrefs.incognito]);
+
+  // Show the tap zones the first time this device opens the reader.
+  useEffect(() => {
+    if (!prefs || prefs.zones === "off") return;
+    try { if (!localStorage.getItem("tachivel:zoneHint")) { setHint(true); localStorage.setItem("tachivel:zoneHint", "1"); } } catch {}
+  }, [!!prefs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep the screen awake while reading.
   useEffect(() => {
@@ -116,8 +139,10 @@ export default function Reader() {
 
   const go = useCallback((delta) => {
     if (!total) return;
+    // One step past the last page is the "Finished / Next" page; the step after that opens the next chapter.
+    if (page >= total) { if (delta > 0) { if (next) nav(`/comics/read/${next.id}`, { replace: true }); } else setPage(Math.max(0, total - step)); return; }
     const n = page + delta * step;
-    if (n >= total) { if (next) nav(`/comics/read/${next.id}`, { replace: true }); else setPage(total - 1); return; }
+    if (n >= total) { setPage(total); return; }
     if (n < 0) { if (prev) nav(`/comics/read/${prev.id}`, { replace: true }); return; }
     setPage(n);
   }, [page, total, step, next, prev, nav]);
@@ -148,21 +173,27 @@ export default function Reader() {
     return () => removeEventListener("keydown", key);
   }, [go, webtoon, rtl, panel, chapter, nav]);
 
-  const tap = (zone) => {
-    if (zone === "mid" || prefs.zones === "off") { setUi((u) => !u); return; }
-    if (webtoon) { scroller.current?.scrollBy({ top: innerHeight * 0.8 * (zone === "right" ? 1 : -1), behavior: "smooth" }); return; }
-    const forward = rtl ? zone === "left" : zone === "right";
-    go(forward ? 1 : -1);
+  const tap = (e) => {
+    if (hint) { setHint(false); return; }
+    const zone = zoneAt(prefs, rtl && !webtoon, e.clientX / innerWidth, e.clientY / innerHeight);
+    if (zone === "menu") { setUi((u) => !u); return; }
     setUi(false);
+    if (webtoon) scroller.current?.scrollBy({ top: innerHeight * 0.8 * (zone === "next" ? 1 : -1), behavior: "smooth" });
+    else go(zone === "next" ? 1 : -1);
   };
   const setPref = (patch, scope = "series") => {
     const nextPrefs = { ...prefs, ...patch };
     setPrefs(nextPrefs);
     try { localStorage.setItem(scope === "series" ? readerPrefsKey(chapter.mangaId) : "tachivel:reader:default", JSON.stringify(nextPrefs)); } catch {}
   };
+  const cycleMode = () => {
+    const i = MODES.findIndex(([m]) => m === prefs.mode), [mode, label] = MODES[(i + 1) % MODES.length];
+    setPref({ mode }); setFlash(label); setTimeout(() => setFlash(""), 1400);
+  };
 
   const shown = useMemo(() => {
     if (!pages || webtoon) return [];
+    if (page >= pages.length) return [];
     const p = spread ? pages.slice(page, page + 2) : [pages[page]];
     return rtl ? p.reverse() : p;
   }, [pages, page, spread, rtl, webtoon]);
@@ -182,22 +213,26 @@ export default function Reader() {
   return (
     <div className={`reader${ui ? "" : " hide-ui"}`} data-bg={prefs.bg}>
       {webtoon ? (
-        <div className="reader-scroll" ref={scroller} onClick={(e) => { const x = e.clientX / innerWidth; tap(prefs.zones === "edges" && x < 0.25 ? "left" : prefs.zones === "edges" && x > 0.75 ? "right" : "mid"); }}>
+        <div className="reader-scroll" ref={scroller} onClick={tap}>
           <div className="strip" style={{ "--page-gap": prefs.gap === "small" ? "8px" : prefs.gap === "large" ? "24px" : "0px" }}>
             {!pages ? <div className="reader-wait"><Spinner />{status && <p>{status}</p>}</div> : pages.map((u, i) => <img key={u} src={u} data-i={i} alt={`Page ${i + 1}`} loading={i < 4 ? "eager" : "lazy"} decoding="async" />)}
-            {pages && <ChapterEnd next={next} onNext={() => nav(`/comics/read/${next.id}`)} onBack={() => nav(`/comics/series/${chapter.mangaId}`)} />}
+            {pages && <ChapterEnd chapter={chapter} next={next} onNext={() => nav(`/comics/read/${next.id}`)} onBack={() => nav(`/comics/series/${chapter.mangaId}`)} />}
           </div>
         </div>
       ) : (
         <>
           <div className={`paged${prefs.fit === "width" ? " fit-width" : ""}${spread ? " spread" : ""}`}>
-            {!pages ? <div className="reader-wait"><Spinner />{status && <p>{status}</p>}</div> : shown.map((u) => <img key={u} src={u} alt="" className="page-img" decoding="async" />)}
+            {!pages ? <div className="reader-wait"><Spinner />{status && <p>{status}</p>}</div> : page >= total ? null : shown.map((u) => <img key={u} src={u} alt="" className="page-img" decoding="async" />)}
           </div>
+          {pages && page >= total && <div className="transition"><ChapterEnd chapter={chapter} next={next} onNext={() => nav(`/comics/read/${next.id}`, { replace: true })} onBack={() => nav(`/comics/series/${chapter.mangaId}`)} /></div>}
           {pages && pages.slice(page + step, page + step + 3).map((u) => <link key={u} rel="prefetch" href={u} />)}
-          <div className="zones">{["left", "mid", "right"].map((z) => <button key={z} type="button" aria-label={z === "mid" ? "Show or hide controls" : z === "left" ? "Left" : "Right"} onClick={() => tap(z)} />)}</div>
+          <button type="button" className="zones" aria-label="Turn the page, or show the controls" onClick={tap} />
         </>
       )}
 
+      {prefs.dim > 0 && <div className="reader-dim" style={{ opacity: prefs.dim / 100 }} aria-hidden />}
+      {hint && <ZoneMap prefs={prefs} rtl={rtl && !webtoon} overlay onClick={() => setHint(false)} />}
+      {flash && <div className="reader-flash" role="status">{flash}</div>}
       <header className="reader-top">
         <IconButton icon="back" label="Back to the series" onClick={() => nav(`/comics/series/${chapter.mangaId}`)} />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -214,50 +249,87 @@ export default function Reader() {
       <footer className="reader-bottom">
         <div className="reader-ctl">
           <IconButton icon={rtl ? "nextch" : "prevch"} label={rtl ? "Next chapter" : "Previous chapter"} disabled={rtl ? !next : !prev} onClick={() => nav(`/comics/read/${(rtl ? next : prev).id}`, { replace: true })} />
-          <input type="range" min={0} max={Math.max(0, total - 1)} value={page} dir={rtl ? "rtl" : "ltr"} aria-label="Page"
+          <input type="range" min={0} max={Math.max(0, total - 1)} value={Math.min(page, Math.max(0, total - 1))} dir={rtl ? "rtl" : "ltr"} aria-label="Page"
             onChange={(e) => { const p = Number(e.target.value); setPage(p); if (webtoon) scroller.current?.querySelectorAll("img[data-i]")[p]?.scrollIntoView(); }} />
           <IconButton icon={rtl ? "prevch" : "nextch"} label={rtl ? "Previous chapter" : "Next chapter"} disabled={rtl ? !prev : !next} onClick={() => nav(`/comics/read/${(rtl ? prev : next).id}`, { replace: true })} />
         </div>
         <div className="reader-meta">
+          <button type="button" className="mode-btn only-phone" onClick={cycleMode} aria-label="Change reading mode"><Icon name={webtoon ? "webtoon" : "paged"} size={16} />{MODES.find(([m]) => m === prefs.mode)?.[1]}</button>
           {prefs.pageNumber && <b>Page {Math.min(page + 1, total)}{spread && page + 2 <= total ? `–${page + 2}` : ""} of {total}</b>}
           {ahead && <span><Icon name="ok" size={14} className="ok" /> {ahead}</span>}
           {comicPrefs.incognito && <span>Incognito</span>}
         </div>
       </footer>
 
-      {panel && <ReaderPanel prefs={prefs} setPref={setPref} onClose={() => setPanel(false)} />}
+      {panel && <ReaderPanel prefs={prefs} setPref={setPref} rtl={rtl && !webtoon} onClose={() => setPanel(false)} />}
     </div>
   );
 }
 
-function ChapterEnd({ next, onNext, onBack }) {
+// Between chapters (end of a webtoon strip, or the page after the last one in paged mode), like Mihon's transition page.
+function ChapterEnd({ chapter, next, onNext, onBack }) {
+  const gap = next && chapter.chapterNumber > 0 && next.chapterNumber > 0 ? Math.ceil(next.chapterNumber - chapter.chapterNumber) - 1 : 0;
+  const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
   return (
-    <div className="chapter-end">
-      <Icon name="ok" size={28} className="ok" />
-      <h2>End of the chapter</h2>
-      {next ? <Button kind="accent" icon="nextch" onClick={(e) => { e.stopPropagation(); onNext(); }}>Next · {chapterLabel(next)}</Button> : <p>You're caught up. New chapters show up in Updates.</p>}
-      <Button onClick={(e) => { e.stopPropagation(); onBack(); }}>Back to the series</Button>
+    <div className="chapter-end" onClick={(e) => e.stopPropagation()}>
+      <div className="transition-rows">
+        <div><span className="caps-sm">Finished</span><b>{chapterLabel(chapter)}</b></div>
+        <div><span className="caps-sm">Next</span><b>{next ? chapterLabel(next) : "Nothing yet"}</b></div>
+      </div>
+      {gap > 0 && <p className="warn"><Icon name="alert" size={14} /> {gap} chapter{gap === 1 ? "" : "s"} missing between these two</p>}
+      {next ? <Button kind="accent" icon="nextch" onClick={stop(onNext)}>Read {chapterLabel(next)}</Button> : <p>You're caught up. New chapters show up in Updates.</p>}
+      <Button onClick={stop(onBack)}>Back to the series</Button>
     </div>
   );
 }
 
-function ReaderPanel({ prefs, setPref, onClose }) {
+// A picture of the tap zones: as a one-time overlay on the reader, or small, inside the settings.
+function ZoneMap({ prefs, rtl, overlay, onClick }) {
+  const cells = [];
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) cells.push(zoneAt(prefs, rtl, (c + 0.5) / 3, (r + 0.5) / 3));
+  const label = { prev: "Previous", next: "Next", menu: "Menu" };
+  return (
+    <div className={`zone-map${overlay ? " overlay" : ""}`} onClick={onClick} aria-hidden={!overlay}>
+      {cells.map((z, i) => <span key={i} className={`z-${z}`}>{i === cells.indexOf(z) && z !== "menu" ? label[z] : overlay && i === cells.indexOf(z) ? label[z] : ""}</span>)}
+      {overlay && <p>Tap anywhere to start reading</p>}
+    </div>
+  );
+}
+
+function ReaderPanel({ prefs, setPref, onClose, rtl }) {
   const [scope, setScope] = useState("series");
+  const [tab, setTab] = useState("reading");
   const set = (patch) => setPref(patch, scope);
-  const opt = (label, key, options) => (<div style={{ display: "grid", gap: 8 }}><label className="lbl">{label}</label><Segmented options={options} value={prefs[key]} onChange={(v) => set({ [key]: v })} label={label} /></div>);
+  const opt = (label, key, options) => (<div className="panel-opt"><label className="lbl">{label}</label><Segmented options={options} value={prefs[key]} onChange={(v) => set({ [key]: v })} label={label} /></div>);
+  const phone = innerWidth < 700;
   return (
-    <aside className="reader-panel" role="dialog" aria-label="Reader settings">
-      <div className="sheet-head"><h2>Reader</h2><IconButton icon="close" label="Close" onClick={onClose} /></div>
-      <Segmented options={[{ value: "series", label: "This series" }, { value: "default", label: "All series" }]} value={scope} onChange={setScope} />
-      {opt("READING MODE", "mode", [{ value: "webtoon", label: "Webtoon" }, { value: "ltr", label: "Left → right" }, { value: "rtl", label: "Right → left" }])}
-      {opt("TWO PAGES SIDE BY SIDE", "spread", [{ value: "off", label: "Off" }, { value: "auto", label: "Wide screens" }, { value: "on", label: "On" }])}
-      {opt("PAGE FIT", "fit", [{ value: "screen", label: "Screen" }, { value: "width", label: "Width" }])}
-      {opt("TAP ZONES", "zones", [{ value: "edges", label: "Edges" }, { value: "off", label: "Off" }])}
-      {opt("BACKGROUND", "bg", [{ value: "theme", label: "Theme" }, { value: "black", label: "Black" }, { value: "white", label: "White" }, { value: "grey", label: "Grey" }])}
-      {opt("GAP BETWEEN WEBTOON PAGES", "gap", [{ value: "none", label: "None" }, { value: "small", label: "Small" }, { value: "large", label: "Large" }])}
-      <Row title="Show page number" toggle={prefs.pageNumber} onToggle={(v) => set({ pageNumber: v })} />
-      <Row title="Keep the screen awake" toggle={prefs.keepAwake} onToggle={(v) => set({ keepAwake: v })} />
-      <p className="sub">Pinch to zoom works in every mode. How many chapters to save ahead is in Settings → Reader.</p>
-    </aside>
+    <>
+      <div className="reader-scrim" onClick={onClose} />
+      <aside className="reader-panel" role="dialog" aria-label="Reader settings">
+        <div className="grab only-phone" aria-hidden />
+        <div className="sheet-head"><h2>Reader</h2><IconButton icon="close" label="Close" onClick={onClose} /></div>
+        <Segmented options={[{ value: "reading", label: "Reading" }, { value: "zones", label: "Tap zones" }, { value: "display", label: "Display" }]} value={tab} onChange={setTab} label="Settings" />
+        {tab === "reading" && <>
+          {opt("READING MODE", "mode", MODES.map(([value, label]) => ({ value, label })))}
+          {!phone && opt("TWO PAGES SIDE BY SIDE", "spread", [{ value: "off", label: "Off" }, { value: "auto", label: "Wide screens" }, { value: "on", label: "On" }])}
+          {opt("PAGE FIT", "fit", [{ value: "screen", label: "Screen" }, { value: "width", label: "Width" }])}
+          <Row title="Keep the screen awake" toggle={prefs.keepAwake} onToggle={(v) => set({ keepAwake: v })} />
+        </>}
+        {tab === "zones" && <>
+          {opt("LAYOUT", "zones", [{ value: "edges", label: "Edges" }, { value: "lshape", label: "L-shape" }, { value: "kindle", label: "Kindle" }, { value: "off", label: "Off" }])}
+          {prefs.zones !== "off" && opt("FLIP", "invert", [{ value: "none", label: "None" }, { value: "h", label: "Sideways" }, { value: "v", label: "Up–down" }, { value: "both", label: "Both" }])}
+          {prefs.zones !== "off" && <ZoneMap prefs={prefs} rtl={rtl} />}
+          <p className="sub">{prefs.zones === "off" ? "Taps only show and hide the controls. Swipe or scroll to turn pages." : "The shaded parts turn the page; the clear part shows and hides the controls."}</p>
+        </>}
+        {tab === "display" && <>
+          {opt("BACKGROUND", "bg", [{ value: "theme", label: "Theme" }, { value: "black", label: "Black" }, { value: "white", label: "White" }, { value: "grey", label: "Grey" }])}
+          <div className="panel-opt"><label className="lbl">DIM THE PAGES · {prefs.dim || 0}%</label>
+            <input type="range" min={0} max={80} step={5} value={prefs.dim || 0} onChange={(e) => set({ dim: Number(e.target.value) })} aria-label="Dim the pages" /></div>
+          {prefs.mode === "webtoon" && opt("GAP BETWEEN PAGES", "gap", [{ value: "none", label: "None" }, { value: "small", label: "Small" }, { value: "large", label: "Large" }])}
+          <Row title="Show page number" toggle={prefs.pageNumber} onToggle={(v) => set({ pageNumber: v })} />
+        </>}
+        <div className="panel-opt"><label className="lbl">APPLY TO</label><Segmented options={[{ value: "series", label: "This series" }, { value: "default", label: "All series" }]} value={scope} onChange={setScope} label="Apply to" /></div>
+      </aside>
+    </>
   );
 }

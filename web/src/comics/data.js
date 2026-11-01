@@ -39,7 +39,7 @@ export function useComicPrefs() {
   return [prefs, update];
 }
 export const readerPrefsKey = (mangaId) => `tachivel:reader:${mangaId}`;
-export const READER_DEFAULTS = { mode: "webtoon", spread: "auto", fit: "screen", zones: "edges", bg: "black", gap: "none", crop: false, pageNumber: true, keepAwake: true };
+export const READER_DEFAULTS = { mode: "webtoon", spread: "auto", fit: "screen", zones: "edges", invert: "none", dim: 0, bg: "black", gap: "none", crop: false, pageNumber: true, keepAwake: true };
 export function readReaderPrefs(mangaId) {
   try { return { ...READER_DEFAULTS, ...JSON.parse(localStorage.getItem("tachivel:reader:default") || "{}"), ...JSON.parse(localStorage.getItem(readerPrefsKey(mangaId)) || "{}") }; }
   catch { return { ...READER_DEFAULTS }; }
@@ -47,3 +47,14 @@ export function readReaderPrefs(mangaId) {
 
 export const STATUS = { ONGOING: "Ongoing", COMPLETED: "Completed", ON_HIATUS: "Hiatus", CANCELLED: "Cancelled", PUBLISHING_FINISHED: "Finished", LICENSED: "Licensed", UNKNOWN: "" };
 export const num = (n) => (n == null || n < 0 ? "" : +Number(n).toFixed(2));
+
+// Tracker sign-in. Suwayomi's tracker apps all return to suwayomi.org/tracker-oauth, which forwards to `state.redirectUrl`
+// with the token appended; without a state the token is stranded there. Same window, so an installed iPhone app keeps its session.
+export function connectTracker(t) {
+  const state = JSON.stringify({ redirectUrl: `${location.origin}/tracker-oauth/${t.id}`, clientName: "Tachivel" });
+  try { sessionStorage.setItem("tachivel:trackerReturn", location.pathname + location.search); } catch {}
+  location.href = `${t.authUrl}&state=${encodeURIComponent(state)}`;
+}
+
+// Adult options inside a source's own settings and filters stay hidden too, unless adult sources are on (Settings → Browse).
+export const ADULT_OPTION = /erotica|pornographic|hentai|nsfw|adult|18\+/i;

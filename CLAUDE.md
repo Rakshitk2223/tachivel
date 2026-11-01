@@ -57,6 +57,10 @@ Personal listen-along EPUB reader. The browser's speech engine reads the book al
 - **Use Safari.** Chrome cuts off long utterances and gets only weaker macOS voices.
 - `PART_MAX` is 4.5 MB because a Netlify Function body caps at 6 MB, and `PARTS_MAX` 20 caps books at ~90 MB. Replacing the book deletes the previous upload's parts.
 - `*.epub` and `backups/` (personal Tachimanga `.tmb` exports) are gitignored. Never commit either.
+- **Don't reuse the kit's class names** (`.menu`, `.row`, `.chip`, `.grab`…) for new elements. A `menu` cell in the reader's tap-zone map picked up the pop-up menu's styling.
+- **The route sweep must catch render errors from the browser console**, not by matching the crash screen's wording. The crash screen only says "updated" when a code file has gone missing after a redeploy; any other error shows its real message.
+- Tracker sign-in goes out through `suwayomi.org/tracker-oauth`, which forwards to `state.redirectUrl`, which lands on `/tracker-oauth/:id`. Without `state` the token is stranded. Kitsu and MangaUpdates use a password instead.
+- Adult options inside source settings and filters are hidden unless adult sources are on (`ADULT_OPTION` in `comics/data.js`).
 - Spoiler rule: images and World/codex entries unlock only up to the farthest point read (`farthest()` / `reached()` in `app.js`).
 
 ## Related docs

@@ -2,9 +2,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { gql, Q, M } from "../lib/gql.js";
-import { Button, Chip, ComicCard, Empty, ErrorNote, IconButton, Row, Segmented, Sheet, Spinner } from "../ui/kit.jsx";
+import { AppBar, Button, Chip, ComicCard, Empty, ErrorNote, IconButton, Row, Segmented, Sheet, Spinner } from "../ui/kit.jsx";
 import { Icon } from "../ui/icons.jsx";
-import { useGql, STATUS } from "./data.js";
+import { useGql, useComicPrefs, STATUS, ADULT_OPTION } from "./data.js";
+import { langName } from "./Browse.jsx";
 
 // The source describes its filters; we keep a state per filter position and send only the ones you changed.
 function initial(filters) {
@@ -15,7 +16,7 @@ function initial(filters) {
       case "TextFilter": return f.txDefault;
       case "SelectFilter": return f.selDefault;
       case "SortFilter": return f.sortDefault || { index: 0, ascending: false };
-      case "GroupFilter": return f.filters.map((g) => (g.__typename === "TriStateFilter" ? g.tsDefault : g.cbDefault));
+      case "GroupFilter": return f.filters.map((g) => (g.__typename === "TriStateFilter" ? g.tsDefault : g.__typename === "SelectFilter" ? g.selDefault : g.cbDefault));
       default: return null;
     }
   });
@@ -30,7 +31,7 @@ function changes(filters, state) {
     if (f.__typename === "TextFilter") out.push({ position, textState: v });
     if (f.__typename === "SelectFilter") out.push({ position, selectState: v });
     if (f.__typename === "SortFilter") out.push({ position, sortState: v });
-    if (f.__typename === "GroupFilter") v.forEach((gv, i) => { if (gv !== d[i]) out.push({ position, groupChange: { position: i, ...(f.filters[i].__typename === "TriStateFilter" ? { triState: gv } : { checkBoxState: gv }) } }); });
+    if (f.__typename === "GroupFilter") v.forEach((gv, i) => { if (gv !== d[i]) out.push({ position, groupChange: { position: i, ...({ TriStateFilter: { triState: gv }, SelectFilter: { selectState: gv } }[f.filters[i].__typename] || { checkBoxState: gv }) } }); });
   });
   return out;
 }
@@ -44,7 +45,10 @@ export default function Catalogue() {
   // A tapped genre arrives as ?q=, and opens straight into that search.
   const [query, setQuery] = useState(params.get("q") || "");
   const [submitted, setSubmitted] = useState(params.get("q") || "");
-  const [fstate, setFstate] = useState(null);
+  // Filter values belong to one source: keyed by its id, so moving to another source never pairs its filters with the old values.
+  const [fkeyed, setFkeyed] = useState(null);
+  const fstate = fkeyed && fkeyed.id === id ? fkeyed.v : null;
+  const setFstate = (fn) => setFkeyed((k) => ({ id, v: typeof fn === "function" ? fn(k?.id === id ? k.v : []) : fn }));
   const [applied, setApplied] = useState([]);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
@@ -54,7 +58,8 @@ export default function Catalogue() {
   const [sheet, setSheet] = useState(false);
   const s = src.data?.source;
   const filters = s?.filters || [];
-  useEffect(() => { if (s) setFstate(initial(s.filters)); }, [s]);
+  useEffect(() => { if (s && s.id === id) setFkeyed((k) => (k?.id === id && k.v.length === s.filters.length ? k : { id, v: initial(s.filters) })); }, [s, id]);
+  useEffect(() => { setApplied([]); setType("POPULAR"); }, [id]);
 
   const load = useCallback(async (p) => {
     setLoading(true); setError(null);
@@ -67,7 +72,7 @@ export default function Catalogue() {
   }, [id, type, submitted, applied]);
   useEffect(() => { load(1); }, [load]);
 
-  const filtersBody = () => !fstate ? null : (
+  const filtersBody = () => !fstate || fstate.length !== filters.length ? null : (
     <div style={{ display: "grid", gap: 16 }}>
       {filters.map((f, i) => <FilterControl key={i} f={f} v={fstate[i]} set={(v) => setFstate((st) => st.map((x, j) => (j === i ? v : x)))} />)}
       {!filters.length && <p className="sub">This source has no filters.</p>}
@@ -78,12 +83,10 @@ export default function Catalogue() {
 
   return (
     <div className="page">
-      <div className="page-head">
-        <IconButton icon="back" label="Back" onClick={() => nav(-1)} />
-        <h1 className="grow">{s?.displayName || "Source"}</h1>
-        <Button className="only-phone" icon="filter" onClick={() => setSheet(true)}>Filters{applied.length ? ` · ${applied.length}` : ""}</Button>
-        {s?.homeUrl && <Button icon="external" className="hide-phone" onClick={() => window.open(s.homeUrl, "_blank", "noopener")}>Open site</Button>}
-      </div>
+      <AppBar title={s?.displayName || "Source"} sub={s ? langName(s.lang) : undefined} actions={<>
+        <IconButton icon="filter" label={`Filters${applied.length ? ` (${applied.length} on)` : ""}`} active={applied.length > 0} className="only-phone" onClick={() => setSheet(true)} />
+        {s?.homeUrl && <IconButton icon="external" label="Open the site" onClick={() => window.open(s.homeUrl, "_blank", "noopener")} />}
+      </>} />
       <div className="chips">
         <Chip label="Popular" active={type === "POPULAR" && !submitted && !applied.length} onClick={() => { setType("POPULAR"); setSubmitted(""); setQuery(""); setApplied([]); }} />
         {s?.supportsLatest && <Chip label="Latest" active={type === "LATEST" && !submitted && !applied.length} onClick={() => { setType("LATEST"); setSubmitted(""); setQuery(""); setApplied([]); }} />}
@@ -114,6 +117,7 @@ export default function Catalogue() {
 
 const TRI = ["IGNORE", "INCLUDE", "EXCLUDE"];
 function FilterControl({ f, v, set }) {
+  const [prefs] = useComicPrefs();
   const label = <label className="caps" style={{ padding: 0 }}>{f.name}</label>;
   switch (f.__typename) {
     case "HeaderFilter": return <p className="row-title">{f.name}</p>;
@@ -126,8 +130,10 @@ function FilterControl({ f, v, set }) {
         : <div className="chips wrap">{f.values.map((x, i) => <Chip key={x} label={x} active={v === i} onClick={() => set(i)} />)}</div>}</div>;
     case "SortFilter": return <div style={{ display: "grid", gap: 6 }}>{label}<div className="chips wrap">{f.values.map((x, i) => <Chip key={x} label={`${x}${v?.index === i ? (v.ascending ? " ↑" : " ↓") : ""}`} active={v?.index === i} onClick={() => set({ index: i, ascending: v?.index === i ? !v.ascending : false })} />)}</div></div>;
     case "GroupFilter": return <div style={{ display: "grid", gap: 6 }}>{label}<div className="chips wrap">{f.filters.map((g, i) => {
-      const gv = v[i];
+      const gv = v?.[i];
+      if (g.__typename === "SelectFilter") return <span key={g.name} className="group-select"><span className="sub">{g.name}</span><Segmented options={g.values.map((x, j) => ({ value: j, label: x }))} value={gv} onChange={(n) => set(v.map((x, j) => (j === i ? n : x)))} label={g.name} /></span>;
       const tri = g.__typename === "TriStateFilter";
+      if (!prefs.adult && !(tri ? gv !== "IGNORE" : gv) && ADULT_OPTION.test(g.name || "")) return null;
       return <Chip key={g.name} label={`${tri && gv === "EXCLUDE" ? "− " : ""}${g.name}`} active={tri ? gv !== "IGNORE" : gv}
         onClick={() => set(v.map((x, j) => (j !== i ? x : tri ? TRI[(TRI.indexOf(x) + 1) % 3] : !x)))} />;
     })}</div></div>;

@@ -1,5 +1,6 @@
 // The Figma component kit, in code: buttons, chips, segmented controls, toggles, list rows, sheets, covers.
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Icon } from "./icons.jsx";
 import { media } from "../lib/gql.js";
 
@@ -66,6 +67,18 @@ export function Row({ title, sub, mono, icon, iconTone, value, valueTone, button
       {toggle != null && <Toggle on={toggle} onChange={onToggle} label={title} />}
       {chevron && <Icon name="chevr" size={18} className="muted" />}
     </Tag>
+  );
+}
+// The sticky top bar of detail screens (series, catalogue, migrate, search, settings sections):
+// back, a one-line title, then actions. Sits just below the iPhone's status bar.
+export function AppBar({ title, sub, back = true, onBack, actions }) {
+  const nav = useNavigate();
+  return (
+    <header className="appbar">
+      {back && <IconButton icon="back" label="Back" onClick={() => (onBack ? onBack() : history.length > 1 ? nav(-1) : nav("/comics"))} />}
+      <div className="appbar-title"><span>{title}</span>{sub && <small>{sub}</small>}</div>
+      {actions && <div className="appbar-actions">{actions}</div>}
+    </header>
   );
 }
 export function Caps({ children, right }) {

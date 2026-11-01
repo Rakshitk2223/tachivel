@@ -2,9 +2,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { gql, media, Q, M } from "../lib/gql.js";
-import { Button, Caps, Empty, ErrorNote, Menu, Row, Sheet, Spinner } from "../ui/kit.jsx";
+import { Button, Caps, Chip, Empty, ErrorNote, IconButton, Menu, Row, Sheet, Spinner, friendlyError } from "../ui/kit.jsx";
 import { Icon } from "../ui/icons.jsx";
-import { useGql, useComicPrefs } from "./data.js";
+import { useGql, useComicPrefs, ADULT_OPTION } from "./data.js";
 
 const LANG = new Intl.DisplayNames(undefined, { type: "language" });
 export const langName = (l) => (l === "all" ? "Multi-language" : l === "localsourcelang" ? "On your server" : (() => { try { return LANG.of(l); } catch { return l; } })());
@@ -85,37 +85,126 @@ export function LangSheet({ open, onClose, available }) {
   );
 }
 
+const PAGE = 100;
 function Extensions({ filter }) {
   const [prefs] = useComicPrefs();
   const ext = useGql(Q.extensions);
   const stores = useGql(Q.extensionStores);
   const [busy, setBusy] = useState({});
-  const [langs, setLangs] = useState(false);
+  const [sheet, setSheet] = useState(null); // "langs" | "repos" | { ext } for source settings
+  const [limit, setLimit] = useState(PAGE);
   // Ask the repositories for their latest lists once per visit.
   useEffect(() => { gql(M.fetchExtensions).then(() => ext.reload()).catch(() => {}); }, []); // eslint-disable-line
+  useEffect(() => setLimit(PAGE), [filter]);
   const all = (ext.data?.extensions.nodes || []).filter((e) => !filter || e.name.toLowerCase().includes(filter.toLowerCase()));
   const updates = all.filter((e) => e.hasUpdate), installed = all.filter((e) => e.isInstalled && !e.hasUpdate), available = all.filter((e) => !e.isInstalled && shown(prefs, e));
-  const act = async (e, patch) => { setBusy((b) => ({ ...b, [e.pkgName]: true })); try { await gql(M.updateExtension, { id: e.pkgName, patch }); } catch (err) { alert(err.message); } finally { setBusy((b) => ({ ...b, [e.pkgName]: false })); ext.reload(); } };
+  const act = async (e, patch) => { setBusy((b) => ({ ...b, [e.pkgName]: true })); try { await gql(M.updateExtension, { id: e.pkgName, patch }); } catch (err) { alert(friendlyError(err)); } finally { setBusy((b) => ({ ...b, [e.pkgName]: false })); ext.reload(); } };
+  // Only the sources in your languages are worth configuring (MangaDex alone has 60).
+  const configurable = (e) => (e.source?.nodes || []).filter((s) => s.isConfigurable && shownLang(prefs, s.lang));
   const row = (e, button, patch, accent) => <Row key={e.pkgName} mono={<SourceIcon src={e.iconUrl} name={e.name} />} title={e.name} sub={`${langName(e.lang)} · v${e.versionName}${e.isObsolete ? " · obsolete" : ""}`}
-    button={button} buttonKind={accent ? "accent" : "outline"} onButton={() => act(e, patch)} />;
-  const addRepo = async () => { const url = prompt("Repository index URL (ends in index.min.json)"); if (url) { await gql(M.addStore, { url }).catch((e) => alert(e.message)); stores.reload(); gql(M.fetchExtensions).then(() => ext.reload()); } };
+    value={e.isInstalled && configurable(e).length > 0 ? <IconButton icon="settings" label={`${e.name} settings`} onClick={() => setSheet({ ext: e })} /> : undefined}
+    button={busy[e.pkgName] ? "Working…" : button} buttonKind={accent ? "accent" : "outline"} onButton={() => act(e, patch)} />;
+  const repos = stores.data?.extensionStores.nodes || [];
   return (
-    <div className="split split-side">
-      <div className="list">
-        <ErrorNote error={ext.error} onRetry={ext.reload} />
-        {ext.loading && !ext.data && <Spinner />}
-        {updates.length > 0 && <><Caps right={<Button small kind="accent" icon="down" onClick={async () => { await gql(M.updateExtensions, { ids: updates.map((e) => e.pkgName) }).catch((e) => alert(e.message)); await ext.reload(); }}>Update all</Button>}>Updates · {updates.length}</Caps>{updates.map((e) => row(e, "Update", { update: true }, true))}</>}
-        {installed.length > 0 && <><Caps>Installed · {installed.length}</Caps>{installed.map((e) => row(e, "Uninstall", { uninstall: true }))}</>}
-        {available.length > 0 && <><Caps>Available · {available.length}</Caps>{available.slice(0, 300).map((e) => row(e, "Install", { install: true }))}</>}
-        {ext.data && !all.length && <Empty icon="extensions" title="No extensions found">Add a repository to see what you can install.</Empty>}
+    <div className="list">
+      <div className="actions">
+        <Button kind="soft" small icon="globe" onClick={() => setSheet("repos")}>Repositories · {repos.length}</Button>
+        <Button kind="soft" small icon="globe" onClick={() => setSheet("langs")}>Languages</Button>
       </div>
-      <aside className="group" style={{ padding: 20, gap: 12 }}>
-        <h2>Repositories</h2>
-        {(stores.data?.extensionStores.nodes || []).map((s) => <Row key={s.indexUrl} icon="globe" title={s.name || new URL(s.indexUrl).hostname} sub={s.indexUrl} button="Remove" onButton={async () => { if (confirm("Remove this repository?")) { await gql(M.removeStore, { url: s.indexUrl }); stores.reload(); } }} />)}
-        <p className="sub">Extensions run on your server, not on your phone, so they behave the same on every device.</p>
-        <div className="hero-actions"><Button kind="soft" icon="plus" onClick={addRepo}>Add repository</Button><Button kind="soft" icon="globe" onClick={() => setLangs(true)}>Languages</Button></div>
-      </aside>
-      <LangSheet open={langs} onClose={() => setLangs(false)} available={[...new Set((ext.data?.extensions.nodes || []).map((e) => e.lang))]} />
+      <ErrorNote error={ext.error} onRetry={ext.reload} />
+      {ext.loading && !ext.data && <Spinner />}
+      {updates.length > 0 && <><Caps right={<Button small kind="accent" icon="down" onClick={async () => { await gql(M.updateExtensions, { ids: updates.map((e) => e.pkgName) }).catch((e) => alert(friendlyError(e))); await ext.reload(); }}>Update all</Button>}>Updates · {updates.length}</Caps>{updates.map((e) => row(e, "Update", { update: true }, true))}</>}
+      {installed.length > 0 && <><Caps>Installed · {installed.length}</Caps>{installed.map((e) => row(e, "Uninstall", { uninstall: true }))}</>}
+      {available.length > 0 && <><Caps>Available · {available.length}</Caps>{available.slice(0, limit).map((e) => row(e, "Install", { install: true }))}
+        {available.length > limit && <Button kind="ghost" onClick={() => setLimit(limit + PAGE)}>Show {Math.min(PAGE, available.length - limit)} more · {available.length - limit} left</Button>}</>}
+      {ext.data && !all.length && <Empty icon="extensions" title="No extensions found">{filter ? "Nothing matches that search." : "Add a repository to see what you can install."}</Empty>}
+      <ReposSheet open={sheet === "repos"} onClose={() => setSheet(null)} repos={repos} onChange={() => { stores.reload(); gql(M.fetchExtensions).then(() => ext.reload()).catch(() => {}); }} />
+      <LangSheet open={sheet === "langs"} onClose={() => setSheet(null)} available={[...new Set((ext.data?.extensions.nodes || []).map((e) => e.lang))]} />
+      <SourcePrefsSheet open={!!sheet?.ext} onClose={() => setSheet(null)} name={sheet?.ext?.name} sources={sheet?.ext ? configurable(sheet.ext) : []} />
+    </div>
+  );
+}
+
+function ReposSheet({ open, onClose, repos, onChange }) {
+  const [url, setUrl] = useState("");
+  const [error, setError] = useState(null);
+  const add = async () => {
+    setError(null);
+    try { await gql(M.addStore, { url: url.trim() }); setUrl(""); onChange(); } catch (e) { setError(e); }
+  };
+  return (
+    <Sheet open={open} onClose={onClose} title="Repositories">
+      {repos.map((s) => <Row key={s.indexUrl} icon="globe" title={s.name || new URL(s.indexUrl).hostname} sub={s.indexUrl} button="Remove" buttonKind="ghost"
+        onButton={async () => { if (confirm("Remove this repository? Its installed extensions stay.")) { await gql(M.removeStore, { url: s.indexUrl }); onChange(); } }} />)}
+      {!repos.length && <p className="sub">No repositories yet. Add one to see extensions you can install.</p>}
+      <label className="caps">Add a repository</label>
+      <input className="field" placeholder="https://…/index.min.json" inputMode="url" autoCapitalize="none" value={url} onChange={(e) => setUrl(e.target.value)} />
+      <ErrorNote error={error} />
+      <div className="actions"><Button kind="accent" icon="plus" disabled={!/^https?:\/\/.+\.json$/i.test(url.trim())} onClick={add}>Add</Button></div>
+      <p className="sub">Extensions run on your server, not on your phone, so they behave the same on every device.</p>
+    </Sheet>
+  );
+}
+
+// A source's own settings (Suwayomi's source preferences): switches, lists, multi-pick lists and text.
+function SourcePrefsSheet({ open, onClose, name, sources }) {
+  const [picked, setPicked] = useState(null);
+  useEffect(() => { if (open) setPicked(sources.length === 1 ? sources[0] : null); }, [open]); // eslint-disable-line
+  return (
+    <Sheet open={open} onClose={onClose} title={picked ? picked.displayName : `${name || ""} settings`}>
+      {!picked ? <>
+        <p className="sub">This extension has a source for each language. Pick one to change its settings.</p>
+        {sources.map((s) => <Row key={s.id} title={s.displayName} sub={langName(s.lang)} chevron onClick={() => setPicked(s)} />)}
+      </> : <SourcePrefs id={picked.id} onBack={sources.length > 1 ? () => setPicked(null) : null} />}
+    </Sheet>
+  );
+}
+
+function SourcePrefs({ id, onBack }) {
+  const [prefs] = useComicPrefs();
+  const q = useGql(Q.sourcePrefs, { id }, [id]);
+  const [text, setText] = useState({});
+  const [error, setError] = useState(null);
+  const change = async (position, patch) => {
+    setError(null);
+    try { await gql(M.setSourcePref, { source: id, change: { position, ...patch } }); await q.reload(); } catch (e) { setError(e); }
+  };
+  const list = q.data?.source.preferences || [];
+  if (q.loading && !q.data) return <Spinner />;
+  return (
+    <div className="prefs">
+      {onBack && <Button kind="ghost" small icon="back" onClick={onBack}>Other languages</Button>}
+      <ErrorNote error={q.error || error} onRetry={q.reload} />
+      {list.map((p, i) => {
+        if (p.visible === false) return null;
+        const off = p.enabled === false;
+        switch (p.__typename) {
+          case "SwitchPreference": return <Row key={p.key || i} title={p.title} sub={p.summary || undefined} toggle={!!p.switchValue} onToggle={(v) => !off && change(i, { switchState: v })} />;
+          case "CheckBoxPreference": return <Row key={p.key || i} title={p.title} sub={p.summary || undefined} toggle={!!p.checkValue} onToggle={(v) => !off && change(i, { checkBoxState: v })} />;
+          case "ListPreference": return (
+            <label key={p.key || i} className="pref"><span className="row-title">{p.title}</span>
+              <select className="field" disabled={off} value={p.listValue ?? ""} onChange={(e) => change(i, { listState: e.target.value })}>
+                {!p.entryValues.includes(p.listValue) && <option value={p.listValue ?? ""}>Default</option>}
+                {p.entries.map((label, j) => (!prefs.adult && p.listValue !== p.entryValues[j] && ADULT_OPTION.test(`${label} ${p.entryValues[j]}`) ? null : <option key={p.entryValues[j]} value={p.entryValues[j]}>{label}</option>))}
+              </select></label>);
+          case "MultiSelectListPreference": {
+            const on = new Set(p.multiValue || []);
+            return (
+              <div key={p.key || i} className="pref"><span className="row-title">{p.title}</span>{p.summary && <span className="row-sub">{p.summary}</span>}
+                <div className="chips wrap">{p.entries.map((label, j) => { const v = p.entryValues[j]; if (!prefs.adult && !on.has(v) && ADULT_OPTION.test(`${label} ${v}`)) return null; return <Chip key={v} label={label} active={on.has(v)}
+                  onClick={() => { const n = new Set(on); n.has(v) ? n.delete(v) : n.add(v); change(i, { multiSelectState: [...n] }); }} />; })}</div></div>);
+          }
+          case "EditTextPreference": {
+            const v = text[i] ?? p.textValue ?? "";
+            return (
+              <div key={p.key || i} className="pref"><span className="row-title">{p.title}</span>{(p.dialogMessage || p.summary) && <span className="row-sub">{p.dialogMessage || p.summary}</span>}
+                <div className="actions"><input className="field grow" disabled={off} value={v} onChange={(e) => setText({ ...text, [i]: e.target.value })} />
+                  <Button small disabled={off || v === (p.textValue ?? "")} onClick={() => change(i, { editTextState: v }).then(() => setText((t) => { const n = { ...t }; delete n[i]; return n; }))}>Save</Button></div></div>);
+          }
+          default: return null;
+        }
+      })}
+      {!list.length && <p className="sub">This source has no settings.</p>}
     </div>
   );
 }

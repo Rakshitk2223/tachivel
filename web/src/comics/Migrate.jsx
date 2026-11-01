@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { gql, Q, M } from "../lib/gql.js";
-import { Button, Caps, Cover, ErrorNote, IconButton, Row, Spinner } from "../ui/kit.jsx";
+import { AppBar, Button, Caps, Cover, ErrorNote, IconButton, Row, Spinner } from "../ui/kit.jsx";
 import { useGql, useComicPrefs, num } from "./data.js";
 import { SourceIcon, shown } from "./Browse.jsx";
 
@@ -68,7 +68,7 @@ export default function Migrate() {
   if (!m) return <Spinner />;
   return (
     <div className="page">
-      <div className="page-head"><IconButton icon="back" label="Back" onClick={() => nav(-1)} /><h1 className="grow">Migrate</h1></div>
+      <AppBar title="Migrate" sub={m.title} />
       <div className="group" style={{ flexDirection: "row", gap: 16, padding: 16, alignItems: "center" }}>
         <Cover src={m.thumbnailUrl} title={m.title} className="thumb" />
         <div className="row-text"><span className="row-title">{m.title}</span><span className="row-sub">Now on {m.source?.displayName} · {m.chapters.totalCount} chapters · {m.unreadCount} unread</span></div>

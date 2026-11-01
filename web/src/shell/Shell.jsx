@@ -92,6 +92,7 @@ export default function Shell() {
   const { main, handlers, pull, busy } = usePullToRefresh();
   return (
     <div className="shell">
+      <div className="statusbar" aria-hidden />
       <Rail />
       <main className="main" ref={main} {...handlers}>
         {(pull > 0 || busy) && <div className={`ptr${pull > 60 || busy ? " ready" : ""}${busy ? " busy" : ""}`} style={{ height: busy ? 48 : pull }} aria-hidden><Icon name="refresh" size={20} /></div>}
