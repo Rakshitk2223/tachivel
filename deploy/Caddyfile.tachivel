@@ -1,0 +1,41 @@
+# Add to /etc/caddy/Caddyfile on the Oracle box, then: sudo systemctl reload caddy
+# Needs DNS A records for tachivel.rakshiit.me and auth.rakshiit.me → the server's IP.
+
+(tinyauth) {
+	forward_auth 127.0.0.1:47630 {
+		uri /api/auth/caddy
+		copy_headers Remote-User Remote-Email Remote-Name
+	}
+}
+
+tachivel.rakshiit.me {
+	encode zstd gzip
+	# Never trust identity headers from the outside world; only Tinyauth sets them.
+	request_header -Remote-User
+	request_header -Remote-Email
+	request_header -Remote-Name
+
+	# Scripted EPUB uploads carry their own bearer token, checked by the app.
+	handle /api/upload {
+		request_body {
+			max_size 200MB
+		}
+		reverse_proxy 127.0.0.1:47620
+	}
+
+	handle {
+		import tinyauth
+		# Suwayomi's GraphQL, images and websocket, on the same origin as the app.
+		handle_path /suwayomi/* {
+			reverse_proxy 127.0.0.1:4567
+		}
+		# flush_interval -1: live-sync events go out immediately
+		reverse_proxy 127.0.0.1:47620 {
+			flush_interval -1
+		}
+	}
+}
+
+auth.rakshiit.me {
+	reverse_proxy 127.0.0.1:47630
+}

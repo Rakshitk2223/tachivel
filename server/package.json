@@ -1,0 +1,15 @@
+{
+  "name": "tachivel-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "fflate": "0.8.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

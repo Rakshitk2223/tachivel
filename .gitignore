@@ -5,3 +5,10 @@ node_modules/
 
 # Personal backups (e.g. Tachimanga .tmb): local only, never committed
 backups/
+
+# Server build outputs and local data
+server/node_modules/
+web/node_modules/
+web/dist/
+data/
+deploy/.env

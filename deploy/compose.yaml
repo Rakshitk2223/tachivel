@@ -1,0 +1,60 @@
+# Tachivel on the Oracle box. Everything listens on 127.0.0.1 only; Caddy (on the host) is the one public door.
+# All data lives under /srv/tachivel, the 30 GB Tachivel disk (see setup-storage.sh).
+#   cd deploy && docker compose up -d --build
+# Image tags: pin exact versions in .env on first deploy (see .env.example), then bump on purpose.
+name: tachivel
+
+services:
+  app:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    restart: unless-stopped
+    environment:
+      UPLOAD_TOKEN: ${UPLOAD_TOKEN:?set UPLOAD_TOKEN in deploy/.env}
+    volumes:
+      - /srv/tachivel/app:/data
+    ports:
+      - "127.0.0.1:47620:8080"
+    mem_limit: 256m
+
+  # The comics engine: runs your Keiyoushi extensions, checks for new chapters, downloads, keeps comic progress.
+  suwayomi:
+    image: ghcr.io/suwayomi/suwayomi-server:${SUWAYOMI_TAG:-stable}
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Kolkata
+      JAVA_TOOL_OPTIONS: -Xmx1g          # a JVM takes all the RAM it's allowed; other apps share this box
+      DOWNLOAD_AS_CBZ: "true"
+      FLARESOLVERR_ENABLED: "true"
+      FLARESOLVERR_URL: http://flaresolverr:8191
+      # Check these names against the Suwayomi-Server-docker README for the tag you pin.
+    volumes:
+      - /srv/tachivel/suwayomi:/home/suwayomi/.local/share/Tachidesk
+    ports:
+      - "127.0.0.1:4567:4567"
+    mem_limit: 1536m
+    depends_on: [flaresolverr]
+
+  # Gets past Cloudflare bot checks for sources like Asura. Headless Chrome, so it's capped.
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:${FLARESOLVERR_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Kolkata
+      LOG_LEVEL: info
+    mem_limit: 1g
+
+  # The login in front of everything: Google (your Gmail only) or username + password.
+  tinyauth:
+    image: ghcr.io/steveiliop56/tinyauth:${TINYAUTH_TAG:-v3}
+    restart: unless-stopped
+    environment:
+      APP_URL: https://auth.rakshiit.me
+      SECRET: ${TINYAUTH_SECRET:?set TINYAUTH_SECRET}
+      USERS: ${TINYAUTH_USERS:?set TINYAUTH_USERS}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      OAUTH_WHITELIST: ${ALLOWED_EMAIL:?set ALLOWED_EMAIL}
+      SESSION_EXPIRY: "7776000"          # 90 days, so each device signs in about once a season
+      # Variable names differ between Tinyauth major versions; check them for the tag you pin.
+    ports:
+      - "127.0.0.1:47630:3000"
