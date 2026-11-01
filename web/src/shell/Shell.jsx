@@ -1,5 +1,5 @@
 // Layout: a left rail on laptop and iPad, a bottom tab bar on iPhone (Library · Updates · History · Browse · More).
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Icon } from "../ui/icons.jsx";
 import UpdateBar from "../comics/UpdateBar.jsx";
@@ -91,6 +91,9 @@ function usePullToRefresh() {
 
 export default function Shell() {
   const { main, handlers, pull, busy } = usePullToRefresh();
+  // The comics side has its own font; Settings follows whichever side you came from (like the tab bar).
+  const { mode } = useMode();
+  useEffect(() => { document.documentElement.dataset.mode = mode; }, [mode]);
   const comics = useLocation().pathname.startsWith("/comics");
   return (
     <div className="shell">

@@ -41,6 +41,7 @@ Personal listen-along EPUB reader. The browser's speech engine reads the book al
 
 ## Conventions
 - Comments explain *why*, briefly. Match the existing terse style in `app.js` and `core.mjs`.
+- **Comics use Zen Kaku Gothic New** (Figma "Fonts" page, direction B). It's bundled from `web/src/fonts` and scoped by `html[data-mode="comics"]`, which the Shell and Reader set. Novels keep Figtree with Newsreader headings. The CSP `font-src` must keep `'self'`.
 - UI uses semantic tokens only (`var(--surface)`, `var(--space-4)`). There are three themes: `ember` (default), `dark`, `light`.
 - `styles/tokens.css` mirrors the Figma variables one-to-one (FIGMA.md). Change a token in both places or neither.
 - Figma is the design source of truth (Indegene org file in FIGMA.md). The chosen look is Direction A (Rail): no hairline borders, and panels fade into the page.

@@ -1,4 +1,12 @@
 /* Tachivel v2 app. Every value comes from tokens.css roles; layouts follow the Figma "v2" and "Round 2" frames. */
+/* Comics font (Zen Kaku Gothic New, Latin subset, OFL: fonts/OFL-ZenKakuGothicNew.txt). Bundled, so the service worker keeps it offline. */
+@font-face { font-family: "Zen Kaku Gothic New"; font-weight: 400; font-display: swap; src: url("../fonts/ZenKakuGothicNew-400.woff2") format("woff2"); }
+@font-face { font-family: "Zen Kaku Gothic New"; font-weight: 700; font-display: swap; src: url("../fonts/ZenKakuGothicNew-700.woff2") format("woff2"); }
+@font-face { font-family: "Zen Kaku Gothic New"; font-weight: 900; font-display: swap; src: url("../fonts/ZenKakuGothicNew-900.woff2") format("woff2"); }
+/* Comics screens (and the sheets they open) use it for everything; novels keep Figtree and the Newsreader headings. */
+html[data-mode="comics"] { --font-ui: var(--font-comics); --font-read: var(--font-comics); }
+html[data-mode="comics"] :is(h1, .hero-title) { font-weight: 900; letter-spacing: 0; }
+html[data-mode="comics"] :is(h3, .sheet-head h2, .empty h2, .appbar-title span) { font-weight: 700; letter-spacing: 0; }
 *, *::before, *::after { box-sizing: border-box; }
 html, body, #root { height: 100%; }
 body {

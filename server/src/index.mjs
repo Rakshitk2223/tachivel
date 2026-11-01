@@ -21,7 +21,7 @@ const SECURITY = {
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
   // Suwayomi is proxied at /suwayomi on the same origin, so 'self' covers its images and GraphQL socket.
-  "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' blob: data:; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+  "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' blob: data:; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
 };
 
 // Live sync: every open tab keeps one event stream; a change on one device reaches the others in about a second.

@@ -118,6 +118,8 @@ export default function Reader() {
     return () => clearTimeout(saveTimer.current);
   }, [page, total, cid, loadedFor, comicPrefs.incognito]);
 
+  useEffect(() => { document.documentElement.dataset.mode = "comics"; }, []);
+
   // Show the tap zones the first time this device opens the reader.
   useEffect(() => {
     if (!prefs || prefs.zones === "off") return;

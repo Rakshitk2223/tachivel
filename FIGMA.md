@@ -133,3 +133,8 @@ Theme board: [53:1895](https://www.figma.com/design/OfphbBo5TU6i8dy6WZomsy?node-
 | M15 Series categories + tracking | [63:8357](https://www.figma.com/design/OfphbBo5TU6i8dy6WZomsy?node-id=63-8357) |
 
 Figma gotchas learned: layers hidden by a component boolean are absent from `instance.children`, so guard lookups; `appendChild` returns nothing, so don't chain it.
+
+## Fonts (2026-11-01)
+
+Page "Fonts (Nov 2026)", section [68:8413](https://www.figma.com/design/OfphbBo5TU6i8dy6WZomsy?node-id=68-8413) compares four options: the as-is fonts, A Native (SF Pro), B Manga print (Zen Kaku Gothic New) and C Comic grotesk (Archivo).
+**Chosen: B, for the comics side only.** Token: `--font-comics` in `styles/tokens.css`.
