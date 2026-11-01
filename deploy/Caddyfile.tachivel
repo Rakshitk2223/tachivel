@@ -1,7 +1,6 @@
-# Add to /etc/caddy/Caddyfile on the Oracle box, then: sudo systemctl reload caddy
+# Imported by /etc/caddy/Caddyfile (deploy.sh adds the import line once). Edit it here, then redeploy.
 # Needs DNS A records for tachivel.rakshiit.me and auth.rakshiit.me → the server's IP.
-# Caddy needs TACHIVEL_PROXY_SECRET in its environment (same value as PROXY_SECRET in deploy/.env):
-#   sudo systemctl edit caddy  →  [Service] Environment=TACHIVEL_PROXY_SECRET=<value>
+# Caddy gets TACHIVEL_PROXY_SECRET from a systemd drop-in that init-env.sh writes (same value as PROXY_SECRET in deploy/.env).
 
 (tinyauth) {
 	forward_auth 127.0.0.1:47630 {

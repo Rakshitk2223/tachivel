@@ -25,16 +25,17 @@ services:
     mem_limit: 256m
 
   # The comics engine: runs your Keiyoushi extensions, checks for new chapters, downloads, keeps comic progress.
+  # Settings passed here override the in-app ones on every restart, so only the fixed wiring lives here.
   suwayomi:
-    image: ghcr.io/suwayomi/suwayomi-server:${SUWAYOMI_TAG:-stable}
+    image: ghcr.io/suwayomi/suwayomi-server:${SUWAYOMI_TAG:-v2.4.2435}
     restart: unless-stopped
     environment:
       TZ: Asia/Kolkata
       JAVA_TOOL_OPTIONS: -Xmx1g          # a JVM takes all the RAM it's allowed; other apps share this box
-      DOWNLOAD_AS_CBZ: "true"
+      WEB_UI_ENABLED: "false"            # Tachivel is the interface; Suwayomi's own web UI isn't needed
       FLARESOLVERR_ENABLED: "true"
       FLARESOLVERR_URL: http://flaresolverr:8191
-      # Check these names against the Suwayomi-Server-docker README for the tag you pin.
+      FLARESOLVERR_RESPONSE_AS_FALLBACK: "true"
     volumes:
       - /srv/tachivel/suwayomi:/home/suwayomi/.local/share/Tachidesk
     ports:
@@ -45,7 +46,7 @@ services:
 
   # Gets past Cloudflare bot checks for sources like Asura. Headless Chrome, so it's capped.
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:${FLARESOLVERR_TAG:-latest}
+    image: ghcr.io/flaresolverr/flaresolverr:${FLARESOLVERR_TAG:-v3.5.1}
     restart: unless-stopped
     environment:
       TZ: Asia/Kolkata
@@ -53,19 +54,23 @@ services:
     mem_limit: 1g
     networks: [comics]
 
-  # The login in front of everything: Google (your Gmail only) or username + password.
+  # The login in front of everything: Google (your Gmail only) or username + password. Tinyauth v5 setting names.
   tinyauth:
-    image: ghcr.io/steveiliop56/tinyauth:${TINYAUTH_TAG:-v3}
+    image: ghcr.io/steveiliop56/tinyauth:${TINYAUTH_TAG:-v5.0.6}
     restart: unless-stopped
+    user: "1000:1000"                    # the image defaults to root; it doesn't need it
     environment:
-      APP_URL: https://auth.rakshiit.me
-      SECRET: ${TINYAUTH_SECRET:?set TINYAUTH_SECRET}
-      USERS: ${TINYAUTH_USERS:?set TINYAUTH_USERS}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      OAUTH_WHITELIST: ${ALLOWED_EMAIL:?set ALLOWED_EMAIL}
-      SESSION_EXPIRY: "7776000"          # 90 days, so each device signs in about once a season
-      # Variable names differ between Tinyauth major versions; check them for the tag you pin.
+      TINYAUTH_APPURL: https://auth.rakshiit.me
+      TINYAUTH_AUTH_USERS: ${TINYAUTH_USERS:?set TINYAUTH_USERS (run deploy/init-env.sh)}
+      TINYAUTH_AUTH_SECURECOOKIE: "true"
+      TINYAUTH_AUTH_SESSIONEXPIRY: "7776000"   # 90 days, so each device signs in about once a season
+      TINYAUTH_OAUTH_WHITELIST: ${ALLOWED_EMAIL:?set ALLOWED_EMAIL}
+      TINYAUTH_OAUTH_PROVIDERS_GOOGLE_CLIENTID: ${GOOGLE_CLIENT_ID:-}
+      TINYAUTH_OAUTH_PROVIDERS_GOOGLE_CLIENTSECRET: ${GOOGLE_CLIENT_SECRET:-}
+      TINYAUTH_DATABASE_PATH: /data/tinyauth.db
+      TINYAUTH_ANALYTICS_ENABLED: "false"
+    volumes:
+      - /srv/tachivel/auth:/data
     networks: [auth]
     ports:
       - "127.0.0.1:47630:3000"

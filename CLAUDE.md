@@ -6,7 +6,7 @@ Personal listen-along EPUB reader. The browser's speech engine reads the book al
 
 ## v2 layout (in progress)
 - `server/`: Node API for v2 (`src/core.mjs` is pure and tested, `src/index.mjs` is the HTTP, static and SSE layer). Data lives on disk under `DATA_DIR`. Auth comes from Tinyauth's `Remote-User` header; there is no passphrase. `POST /api/upload` takes a bearer `UPLOAD_TOKEN`. Run `cd server && npm test`.
-- `deploy/`: Compose for app, Suwayomi, FlareSolverr and Tinyauth, all on 127.0.0.1. `Caddyfile.tachivel` goes into the host Caddy. `setup-storage.sh` creates the 30 GB disk. The `.env` file is created by hand on the box (a hook blocks writing it).
+- `deploy/`: Compose for app, Suwayomi, FlareSolverr and Tinyauth v5 (pinned, arm64), on separate networks and 127.0.0.1 only. On the box, the repo lives at `/srv/apps/tachivel`. One-time setup is `setup-storage.sh` then `init-env.sh` (writes `.env` and Caddy's secret). Every deploy is `deploy.sh`. The app only trusts `Remote-User` when Caddy's `X-Tachivel-Proxy` secret comes with it.
 - `web/`: React + Vite app. `src/novels`, `src/comics` (over Suwayomi GraphQL, `src/lib/gql.js`), `src/settings`, `src/shell`, `src/ui/kit.jsx` (the Figma kit). The listen-along reader is the vanilla engine in `web/public/novel/` (a patched copy of the root `app.js`). Its sync layer is v2 per-book; the root copy is v1, still live on Netlify.
 - Local run:
   - `DEV_USER=dev DATA_DIR=... PORT=47620 node server/src/index.mjs`

@@ -14,6 +14,6 @@ sudo blkid "$IMG" >/dev/null 2>&1 || sudo mkfs.ext4 -q -L tachivel -m 0 "$IMG"
 grep -q "$IMG" /etc/fstab || echo "$IMG $MNT ext4 loop,defaults,nofail 0 2" | sudo tee -a /etc/fstab >/dev/null
 sudo systemctl daemon-reload
 mountpoint -q "$MNT" || sudo mount "$MNT"
-sudo mkdir -p "$MNT"/{app,suwayomi}
-sudo chown 1000:1000 "$MNT"/app "$MNT"/suwayomi       # the containers run as uid 1000 (node / suwayomi)
+sudo mkdir -p "$MNT"/{app,suwayomi,auth}
+sudo chown 1000:1000 "$MNT"/app "$MNT"/suwayomi "$MNT"/auth   # every container runs as uid 1000
 df -h "$MNT"
