@@ -99,7 +99,7 @@ function Library() {
         <Group title="Categories">
           {list.map((c, i) => (
             <Row key={c.id} title={c.name} sub={`${c.mangas.totalCount} series`}>
-              <span style={{ display: "flex", gap: 4, marginTop: 4 }}>
+              <span className="actions" style={{ marginTop: 4 }}>
                 <IconButton icon="chevl" label="Move up" size={16} disabled={i === 0} onClick={() => act(M.categoryOrder, { id: c.id, position: c.order - 1 })} />
                 <IconButton icon="chevr" label="Move down" size={16} disabled={i === list.length - 1} onClick={() => act(M.categoryOrder, { id: c.id, position: c.order + 1 })} />
                 <IconButton icon="edit" label="Rename" size={16} onClick={() => { const name = prompt("Rename category", c.name); if (name) act(M.renameCategory, { id: c.id, name }); }} />
@@ -249,15 +249,15 @@ function Backup() {
           <Row icon="upload" iconTone="accent" title="Import or restore" sub="A Tachimanga backup (.tmb), or a Mihon / Tachiyomi / Suwayomi backup (.tachibk, .proto.gz): series, categories, read chapters and history" button="Choose file" buttonKind="accent" onButton={() => file.current.click()} />
           <input ref={file} type="file" hidden onChange={(e) => { choose(e.target.files[0]); e.target.value = ""; }} />
           {step && <div className="note" style={{ margin: 8, alignItems: "flex-start", flexDirection: "column" }}>
-            {step.phase === "reading" && <span style={{ display: "flex", gap: 8, alignItems: "center" }}><Spinner />Reading {step.name}…</span>}
+            {step.phase === "reading" && <span className="actions"><Spinner />Reading {step.name}…</span>}
             {step.phase === "error" && <span className="warn"><Icon name="alert" size={16} /> {step.error}</span>}
             {step.phase === "check" && <>
               <span className="row-title">{s ? `${s.series} series · ${s.chapters.toLocaleString()} chapters (${s.read.toLocaleString()} read) · ${s.categories} categories` : step.name}</span>
               {step.missing.length ? <span className="warn">Install these extensions first, or those series won't update until you do: {step.missing.map((m) => m.name || m.id).join(", ")}</span>
                 : <span className="ok">Every source is installed.</span>}
-              <span style={{ display: "flex", gap: 8 }}><Button kind="accent" icon="upload" onClick={restore}>Restore now</Button>{step.missing.length > 0 && <Button onClick={() => (location.href = "/comics/browse/extensions")}>Install extensions</Button>}<Button kind="ghost" onClick={() => setStep(null)}>Cancel</Button></span>
+              <span className="actions"><Button kind="accent" icon="upload" onClick={restore}>Restore now</Button>{step.missing.length > 0 && <Button onClick={() => (location.href = "/comics/browse/extensions")}>Install extensions</Button>}<Button kind="ghost" onClick={() => setStep(null)}>Cancel</Button></span>
             </>}
-            {step.phase === "restoring" && <span style={{ display: "flex", gap: 8, alignItems: "center" }}><Spinner />Restoring{step.status?.totalManga ? ` · ${step.status.mangaProgress} of ${step.status.totalManga} series` : "…"}</span>}
+            {step.phase === "restoring" && <span className="actions"><Spinner />Restoring{step.status?.totalManga ? ` · ${step.status.mangaProgress} of ${step.status.totalManga} series` : "…"}</span>}
             {step.phase === "done" && <span className="ok"><Icon name="ok" size={16} /> Restored{s ? ` ${s.series} series` : ""}. Your library is ready.</span>}
           </div>}
           <Row icon="backup" title="Back up now" sub="Library, categories, history, settings" button={making ? "Working…" : "Back up"} onButton={make} />

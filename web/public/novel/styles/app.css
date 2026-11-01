@@ -357,3 +357,8 @@ dialog::backdrop { background: rgb(0 0 0 / .55); }
   .home-link svg { width: 18px; height: 18px; fill: currentColor; }
   .main { padding-top: calc(env(safe-area-inset-top) + 44px); }
 }
+
+/* v2: no zoom-on-focus on iOS (it zooms into text fields under 16px) and no double-tap zoom on controls. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+button, a { touch-action: manipulation; }
+@media (max-width: 800px), (pointer: coarse) { input[type="text"], input[type="search"], input[type="password"], .goto input, .search-head input { font-size: 16px !important; } }

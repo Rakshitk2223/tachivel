@@ -55,7 +55,7 @@ export default function Series() {
     <div className="page">
       <div className="series">
         <aside className="series-about">
-          <button type="button" className="row-sub" style={{ display: "flex", gap: 8, alignItems: "center" }} onClick={() => nav(-1)}><Icon name="back" size={18} />Back</button>
+          <button type="button" className="row-sub actions" onClick={() => nav(-1)}><Icon name="back" size={18} />Back</button>
           <div className="series-head">
             <Cover src={m.thumbnailUrl} title={m.title} />
             <div style={{ display: "grid", gap: 8, minWidth: 0 }}>

@@ -42,14 +42,29 @@ function Rail() {
   );
 }
 
+// The last shelf you were on, so Settings knows which tab bar to show (like Mihon: the bar never disappears).
+const MODE_KEY = "tachivel:lastMode";
+function useMode() {
+  const path = useLocation().pathname;
+  const here = path.startsWith("/comics") ? "comics" : path === "/" ? "novels" : null;
+  if (here) { try { localStorage.setItem(MODE_KEY, here); } catch {} }
+  let last = "novels";
+  try { last = localStorage.getItem(MODE_KEY) || "novels"; } catch {}
+  return { mode: here || last, path };
+}
+
 function TabBar() {
-  const comics = useLocation().pathname.startsWith("/comics");
-  if (!comics) return null; // Novels on a phone: the header has the switch and settings
-  const tabs = [...COMICS.slice(0, 4), ["/comics/more", "more", "More"]];
+  const { mode, path } = useMode();
+  const settings = path.startsWith("/settings");
+  const tabs = mode === "comics"
+    ? [...COMICS.slice(0, 4), ["/comics/more", "more", "More"]]
+    : [["/", "book", "Novels", true], ["/comics", "comic", "Comics"], ["/settings", "settings", "Settings"]];
+  // Settings counts as "More" in Comics, and as "Settings" in Novels.
+  const on = (to, isActive) => isActive || (settings && (to === "/comics/more" || to === "/settings"));
   return (
-    <nav className="tabbar" aria-label="Comics">
+    <nav className="tabbar" aria-label={mode === "comics" ? "Comics" : "Novels"}>
       {tabs.map(([to, icon, label, end]) => (
-        <NavLink key={to} to={to} end={end} className={({ isActive }) => (isActive ? "on" : "")}><Icon name={icon} size={22} /><span>{label}</span></NavLink>
+        <NavLink key={to} to={to} end={end} className={({ isActive }) => (on(to, isActive) ? "on" : "")}><Icon name={icon} size={22} /><span>{label}</span></NavLink>
       ))}
     </nav>
   );

@@ -51,7 +51,7 @@ export default function GlobalSearch() {
       {!term && <p className="sub">Type a title to search all your sources at once.</p>}
       {entries.map(([id, r]) => (
         <section key={id} style={{ display: "grid", gap: 12 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+          <div className="actions">
             <h2>{r.name}</h2>
             <span className={`sub ${r.state === "error" ? "warn" : ""}`}>{r.state === "loading" ? "Searching…" : r.state === "error" ? r.error : `${r.items.length} result${r.items.length === 1 ? "" : "s"}`}</span>
             <span style={{ flex: 1 }} />

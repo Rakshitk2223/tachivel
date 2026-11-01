@@ -14,7 +14,7 @@ export function StorageMeter() {
   const { total, used } = s.data;
   return (
     <div className="group" style={{ gap: 8, padding: "12px 16px", minWidth: 240 }}>
-      <span style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}><Icon name="storage" size={16} className="muted" /><b style={{ fontWeight: 500 }}>{gb(used)} of {gb(total)} used</b></span>
+      <span className="actions" style={{ fontSize: 13 }}><Icon name="storage" size={16} className="muted" /><b style={{ fontWeight: 500 }}>{gb(used)} of {gb(total)} used</b></span>
       <Progress value={used / total} />
     </div>
   );

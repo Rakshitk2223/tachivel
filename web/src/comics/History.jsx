@@ -23,7 +23,7 @@ export default function History() {
       <div className="page-head">
         <div className="grow"><h1>History</h1><p className="sub">Everything you opened, newest first. Synced across your devices.</p></div>
         <label className="search" style={{ width: 260 }}><Icon name="search" size={16} className="muted" /><input placeholder="Search history" value={q} onChange={(e) => setQ(e.target.value)} /></label>
-        <label className="row-value" style={{ display: "flex", gap: 8, alignItems: "center" }}><Icon name="incognito" size={18} /> Incognito <Toggle on={prefs.incognito} onChange={(incognito) => setPrefs({ incognito })} label="Incognito" /></label>
+        <label className="row-value actions"><Icon name="incognito" size={18} /> Incognito <Toggle on={prefs.incognito} onChange={(incognito) => setPrefs({ incognito })} label="Incognito" /></label>
       </div>
       {prefs.incognito && <div className="note"><Icon name="incognito" /><span>Incognito is on: what you read on this device isn't saved to history or progress.</span></div>}
       <ErrorNote error={hist.error} onRetry={hist.reload} />

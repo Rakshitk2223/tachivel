@@ -315,3 +315,28 @@ dialog.sheet.wide .sheet-body { width: min(820px, calc(100vw - 32px)); }
 .note > span { overflow-wrap: anywhere; min-width: 0; }
 @media (max-width: 700px) { .note { flex-wrap: wrap; } }
 .page, .group, .list, .settings-body { min-width: 0; }
+
+/* ---------- Feel like an app on a phone, not a web page ---------- */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { overscroll-behavior: none; }
+button, a, label, .chip, .seg button { touch-action: manipulation; }            /* no double-tap-to-zoom delay */
+.rail, .tabbar, .btn, .chip, .seg, .caps, .ibtn, .tabs { -webkit-user-select: none; user-select: none; }
+/* iOS zooms into any text field under 16px; at 16px it doesn't, so nothing jumps while you type. */
+@media (max-width: 800px), (pointer: coarse) { input, select, textarea, .search input, .field { font-size: 16px !important; } }
+@media (pointer: coarse) {
+  .ibtn { width: 44px; height: 44px; }
+  .btn { min-height: 40px; }
+  .chip { min-height: 36px; }
+}
+/* Any row of buttons wraps instead of running off the screen; on phones the buttons share the width. */
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.btn { max-width: 100%; }
+.btn > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sheet-actions, .hero-actions, .selbar, .page-head { flex-wrap: wrap; }
+@media (max-width: 700px) {
+  .actions > .btn, .sheet-actions > .btn, .hero-actions > .btn { flex: 1 1 auto; }
+  .note { align-items: flex-start; }
+  .note > .btn { width: 100%; }
+}
+/* Decorative glows may bleed inside the page but never past its edge (on iPhone that lets the page slide sideways). */
+.page { overflow-x: clip; }
