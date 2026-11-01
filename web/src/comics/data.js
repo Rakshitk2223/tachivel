@@ -50,9 +50,13 @@ export const num = (n) => (n == null || n < 0 ? "" : +Number(n).toFixed(2));
 
 // Tracker sign-in. Suwayomi's tracker apps all return to suwayomi.org/tracker-oauth, which forwards to `state.redirectUrl`
 // with the token appended; without a state the token is stranded there. Same window, so an installed iPhone app keeps its session.
+// A one-time nonce rides along in `state`; the return page only signs in when it comes back matching (no login CSRF).
+// localStorage, not sessionStorage: an installed iPhone app may finish the sign-in in a separate browser context.
+export const TRACKER_NONCE = "tachivel:trackerNonce";
 export function connectTracker(t) {
-  const state = JSON.stringify({ redirectUrl: `${location.origin}/tracker-oauth/${t.id}`, clientName: "Tachivel" });
-  try { sessionStorage.setItem("tachivel:trackerReturn", location.pathname + location.search); } catch {}
+  const nonce = crypto.randomUUID();
+  const state = JSON.stringify({ redirectUrl: `${location.origin}/tracker-oauth/${t.id}`, clientName: "Tachivel", nonce });
+  try { localStorage.setItem(TRACKER_NONCE, JSON.stringify({ nonce, id: t.id, at: Date.now() })); sessionStorage.setItem("tachivel:trackerReturn", location.pathname + location.search); } catch {}
   location.href = `${t.authUrl}&state=${encodeURIComponent(state)}`;
 }
 

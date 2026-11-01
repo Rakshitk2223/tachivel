@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { gql, M } from "../lib/gql.js";
 import { forget } from "../lib/api.js";
+import { TRACKER_NONCE } from "../comics/data.js";
 import { Button, Spinner, friendlyError } from "../ui/kit.jsx";
 import { Icon } from "../ui/icons.jsx";
 
@@ -15,6 +16,14 @@ export default function TrackerCallback() {
   useEffect(() => {
     if (once.current) return;
     once.current = true;
+    // Only finish a sign-in this device started in the last 15 minutes, for this tracker.
+    let saved = null, returned = null;
+    try { saved = JSON.parse(localStorage.getItem(TRACKER_NONCE) || "null"); localStorage.removeItem(TRACKER_NONCE); } catch {}
+    try { returned = JSON.parse(new URLSearchParams(location.search).get("state") || "null"); } catch {}
+    if (!saved || !returned?.nonce || saved.nonce !== returned.nonce || saved.id !== Number(id) || Date.now() - saved.at > 15 * 60e3) {
+      setError(new Error("This sign-in wasn't started from Tachivel on this device, so it was ignored. Tap Connect to sign in."));
+      return;
+    }
     gql(M.loginTrackerOAuth, { trackerId: Number(id), callbackUrl: location.href })
       .then((r) => { if (!r.loginTrackerOAuth?.isLoggedIn) throw new Error("The tracker didn't accept that sign-in. Try connecting again."); forget("gql:"); back(); })
       .catch((e) => setError(/token|code/i.test(e.message) ? new Error("The sign-in came back without a token (it was cancelled or expired). Tap Connect to try again.") : e));
