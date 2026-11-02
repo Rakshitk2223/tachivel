@@ -112,6 +112,37 @@ test("book: parts upload, manifest needs every part, old upload is cleaned up, p
   assert.ok(![...t.stores.library.m.keys()].some((k) => k.startsWith("part/up1/")));
 });
 
+test("book delta: files are stored by their hash, manifest needs them all, unused ones are cleaned up", async () => {
+  const t = setup();
+  await t.login();
+  const sha = async (u8) => Buffer.from(await crypto.subtle.digest("SHA-256", u8)).toString("hex");
+  const pack = new Uint8Array([9, 9, 9]), pic = new Uint8Array([7, 7]), pic2 = new Uint8Array([8]);
+  const [hp, hi, hi2] = await Promise.all([pack, pic, pic2].map(sha));
+  assert.equal((await t.call("PUT", `/api/book/files/${hi}`, pic2, { raw: true })).status, 400); // wrong bytes for that name
+  await t.call("PUT", "/api/book/parts/up1/0", pack, { raw: true });
+  await t.call("PUT", `/api/book/files/${hp}`, pack, { raw: true });
+  const m1 = { upload: "up1", parts: 1, size: 3, title: "Book", pack: [hp], media: { "EPUB/media/a.webp": hi } };
+  assert.equal((await t.call("PUT", "/api/book", m1)).status, 409); // the picture isn't up yet
+  await t.call("PUT", `/api/book/files/${hi}`, pic, { raw: true });
+  assert.equal((await t.call("PUT", "/api/book", m1)).status, 200);
+  const got = await (await t.call("GET", "/api/book")).json();
+  assert.deepEqual([got.pack, got.media], [m1.pack, m1.media]);
+  assert.deepEqual([...new Uint8Array(await (await t.call("GET", `/api/book/files/${hi}`)).arrayBuffer())], [7, 7]);
+  assert.equal((await t.call("PUT", "/api/book", { ...m1, media: { x: "nothex" } })).status, 400);
+  // A newer build keeps the shared picture and drops the old pack.
+  const pack2 = new Uint8Array([1]), hp2 = await sha(pack2);
+  await t.call("PUT", "/api/book/parts/up2/0", pack2, { raw: true });
+  await t.call("PUT", `/api/book/files/${hp2}`, pack2, { raw: true });
+  await t.call("PUT", `/api/book/files/${hi2}`, pic2, { raw: true });
+  assert.equal((await t.call("PUT", "/api/book", { upload: "up2", parts: 1, size: 1, title: "Book", pack: [hp2], media: { "a.webp": hi, "b.webp": hi2 } })).status, 200);
+  const keys = [...t.stores.library.m.keys()];
+  assert.ok(keys.includes(`file/${hi}`) && keys.includes(`file/${hp2}`) && !keys.includes(`file/${hp}`));
+  // A plain whole-file upload (e.g. from the browser) drops them all.
+  await t.call("PUT", "/api/book/parts/up3/0", pack, { raw: true });
+  await t.call("PUT", "/api/book", { upload: "up3", parts: 1, size: 3, title: "Book" });
+  assert.ok(![...t.stores.library.m.keys()].some((k) => k.startsWith("file/")));
+});
+
 test("book: rejects oversized parts and path tricks", async () => {
   const t = setup();
   await t.login();

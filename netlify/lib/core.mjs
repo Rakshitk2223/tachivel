@@ -10,6 +10,8 @@ const GLOBAL_WINDOW = 60 * 60 * 1000;
 const WRONG_DELAY = 300;                  // ms; slows guessing down
 export const PART_MAX = 4.5 * 1024 * 1024; // a Netlify Function body tops out at 6 MB
 const PARTS_MAX = 20;                     // ~90 MB books
+const MEDIA_MAX = 2000;                   // pictures per book in the delta layout
+const HASH = /^[0-9a-f]{64}$/;
 const THEMES = new Set(["ember", "dark", "light"]);
 const enc = new TextEncoder();
 
@@ -81,6 +83,9 @@ async function validSession(req, secrets, passphrase, now) {
   } catch { return false; }
 }
 const cookie = (value, maxAge) => `${COOKIE}=${value}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
+
+// Every content-addressed file a manifest points at (the text pack's chunks and the pictures).
+const filesOf = (m) => (m?.pack ? [...m.pack, ...Object.values(m.media || {})] : []);
 
 // ---------- Bookmark ----------
 const str = (v, max) => (typeof v === "string" ? v.slice(0, max) : null);
@@ -172,12 +177,28 @@ export async function handle(req, deps) {
       for (let i = 0; i < parts; i++) {
         if (!(await lib.getMetadata(`part/${upload}/${i}`))) return fail(`Part ${i + 1} of ${parts} is missing. Upload again.`, 409);
       }
-      const manifest = { upload, parts, size: int(m.size, 1, PARTS_MAX * PART_MAX), name: str(m.name, 300), title: str(m.title, 300), at: now };
+      // Optional delta layout: the text as a small zip "pack" (in chunks) plus each picture by hash,
+      // so a device fetches only the pack and pictures it hasn't seen. The whole-file parts stay for the mirror and downloads.
+      let delta = null;
+      if (m.pack != null || m.media != null) {
+        const media = m.media && typeof m.media === "object" && !Array.isArray(m.media) ? Object.entries(m.media) : null;
+        const ok = Array.isArray(m.pack) && m.pack.length >= 1 && m.pack.length <= PARTS_MAX && m.pack.every((h) => HASH.test(h))
+          && media && media.length <= MEDIA_MAX && media.every(([p, h]) => p.length <= 300 && HASH.test(h));
+        if (!ok) return fail("Manifest's pack or media is malformed.", 400);
+        delta = { pack: m.pack, media: Object.fromEntries(media) };
+        const missing = await Promise.all([...new Set(filesOf(delta))].map(async (h) => !(await lib.getMetadata(`file/${h}`))));
+        const n = missing.filter(Boolean).length;
+        if (n) return fail(`${n} file${n === 1 ? " is" : "s are"} missing. Upload again.`, 409);
+      }
+      const manifest = { upload, parts, size: int(m.size, 1, PARTS_MAX * PART_MAX), name: str(m.name, 300), title: str(m.title, 300), at: now, ...delta };
       const previous = await lib.get("book", { type: "json" });
       await lib.setJSON("book", manifest);
       if (previous?.upload && previous.upload !== upload) {
         for (let i = 0; i < (previous.parts || 0); i++) await lib.delete(`part/${previous.upload}/${i}`);
       }
+      // Pictures the new build still uses stay put; only files nothing points at any more go.
+      const keep = new Set(filesOf(manifest));
+      for (const h of new Set(filesOf(previous))) if (!keep.has(h)) await lib.delete(`file/${h}`);
       return json(manifest);
     }
   }
@@ -194,6 +215,23 @@ export async function handle(req, deps) {
     if (method === "GET") {
       const data = await lib.get(key, { type: "arrayBuffer" });
       if (!data) return fail("Part not found.", 404);
+      return new Response(data, { headers: { "content-type": "application/octet-stream", "cache-control": "private, max-age=31536000, immutable" } });
+    }
+  }
+  const file = /^\/api\/book\/files\/([0-9a-f]{64})$/.exec(path);
+  if (file) {
+    const key = `file/${file[1]}`;
+    if (method === "PUT") {
+      const body = await req.arrayBuffer();
+      if (!body.byteLength || body.byteLength > PART_MAX) return fail("File is empty or too large.", 413);
+      // Named by its own SHA-256, so a stored file can never be the wrong bytes.
+      if (hex(new Uint8Array(await crypto.subtle.digest("SHA-256", body))) !== file[1]) return fail("File doesn't match its hash.", 400);
+      await lib.set(key, body);
+      return json({ ok: true, bytes: body.byteLength });
+    }
+    if (method === "GET") {
+      const data = await lib.get(key, { type: "arrayBuffer" });
+      if (!data) return fail("File not found.", 404);
       return new Response(data, { headers: { "content-type": "application/octet-stream", "cache-control": "private, max-age=31536000, immutable" } });
     }
   }

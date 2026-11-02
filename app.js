@@ -43,10 +43,48 @@ async function dbPut(key, val) {
     tx.onerror = () => rej(tx.error);
   });
 }
+async function dbGetAll(keys) {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction("books"), st = tx.objectStore("books"), out = [];
+    keys.forEach((k, i) => (st.get(k).onsuccess = (e) => (out[i] = e.target.result)));
+    tx.oncomplete = () => res(out);
+    tx.onerror = () => rej(tx.error);
+  });
+}
+// Pictures are kept once each by content hash ("img:<sha256>"), outside the book, so a newer build reuses them
+// instead of downloading and writing them again. Pictures no build uses any more are dropped.
+async function saveBook(b) {
+  const db = await idb();
+  const pics = [...b.images, { h: b.coverH, blob: b.cover }].filter((im) => im.h && im.blob);
+  const keep = new Set(pics.map((im) => `img:${im.h}`));
+  return new Promise((res, rej) => {
+    const tx = db.transaction("books", "readwrite"), st = tx.objectStore("books");
+    st.getAllKeys().onsuccess = (e) => {
+      const have = new Set(e.target.result);
+      for (const k of have) if (typeof k === "string" && k.startsWith("img:") && !keep.has(k)) st.delete(k);
+      for (const im of pics) if (!have.has(`img:${im.h}`)) { st.put(im.blob, `img:${im.h}`); have.add(`img:${im.h}`); }
+    };
+    st.put({ ...b, images: b.images.map(({ blob, ...im }) => (im.h ? im : { ...im, blob })) }, "current");
+    tx.oncomplete = res;
+    tx.onerror = () => rej(tx.error);
+  });
+}
+// The saved book with its pictures put back. A picture gone missing means the copy can't be trusted: null, so it's fetched again.
+async function loadBook() {
+  const b = await dbGet("current");
+  const want = b?.images?.filter((im) => !im.blob) || [];
+  if (!want.length) return b;
+  const blobs = await dbGetAll(want.map((im) => `img:${im.h}`));
+  if (blobs.some((x) => !x)) return null;
+  want.forEach((im, i) => (im.blob = blobs[i]));
+  return b;
+}
 
 // ---------- EPUB parsing ----------
 // Bump when the parsed book format changes; older saved books ask for a re-import.
-const BOOK_VERSION = 4;
+// 5: pictures carry a content hash and are stored apart from the book.
+const BOOK_VERSION = 5;
 // Block kinds inside a chapter: [kind, n]
 const TEXT = 0, HEAD = 1, IMAGE = 2, BREAK = 3; // TEXT/HEAD: n sentences · IMAGE: n = image index · BREAK: scene divider
 const CODEX = 4; // parse-time only: a World entry, kept in book.codex and never in a chapter's blocks
@@ -172,10 +210,19 @@ function imageType(path, declared) {
   return RASTER[path.split(".").pop().toLowerCase()] || null;
 }
 
+const sha256 = async (buf) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", buf))].map((b) => b.toString(16).padStart(2, "0")).join("");
+
 // Open the zip and its package file (OPF): metadata, the manifest of files, and the reading order.
-async function openPackage(file) {
+// media: for a delta build, the pictures that aren't in the zip, by path → { h, data }.
+async function openPackage(file, media = null) {
   const zip = await JSZip.loadAsync(file);
   const entry = (p) => zip.file(p) || zip.file(decodeURIComponent(p));
+  const picture = async (p) => {
+    const f = entry(p);
+    if (!f) return media?.[p] || media?.[decodeURIComponent(p)] || null;
+    const data = await f.async("arraybuffer");
+    return { h: await sha256(data), data };
+  };
   const read = async (p) => { const f = entry(p); return f ? f.async("string") : null; };
   const container = await read("META-INF/container.xml");
   if (!container) throw new Error("This file isn't an EPUB (no META-INF/container.xml).");
@@ -189,20 +236,20 @@ async function openPackage(file) {
     items[it.getAttribute("id")] = { href, type: it.getAttribute("media-type") || "", props: it.getAttribute("properties") || "" };
     typeByPath[href] = it.getAttribute("media-type") || "";
   }
-  return { entry, read, opf, base, items, typeByPath };
+  return { entry, read, picture, opf, base, items, typeByPath };
 }
 // The cover picture: EPUB3 marks it "cover-image"; EPUB2 points at it from <meta name="cover">.
-async function coverOf({ entry, opf, items }) {
+async function coverOf({ picture, opf, items }) {
   const id = byTag(opf, "meta").find((m) => m.getAttribute("name") === "cover")?.getAttribute("content");
   const it = Object.values(items).find((i) => i.props.split(/\s+/).includes("cover-image")) || items[id];
-  const f = it && entry(it.href);
   const type = it && imageType(it.href, it.type);
-  return f && type ? new Blob([await f.async("arraybuffer")], { type }) : null;
+  const pic = type && (await picture(it.href));
+  return pic ? { h: pic.h, blob: new Blob([pic.data], { type }) } : null;
 }
 
-async function parseEpub(file, onProgress) {
-  const pkg = await openPackage(file);
-  const { entry, read, opf, items, typeByPath } = pkg;
+async function parseEpub(file, onProgress, media = null) {
+  const pkg = await openPackage(file, media);
+  const { picture, read, opf, items, typeByPath } = pkg;
   const title = clean(byTag(opf, "title")[0]?.textContent || (file.name || "Untitled book").replace(/\.epub$/i, ""));
   const author = clean(byTag(opf, "creator")[0]?.textContent || "");
 
@@ -235,11 +282,10 @@ async function parseEpub(file, onProgress) {
   // One stored copy per picture file; null when it's missing or not a plain picture (e.g. SVG/HTML), which must never become a page-origin blob.
   async function addImage(key, at, alt, cap, ng) {
     if (imageIndex[key] == null) {
-      const f = entry(key);
-      const type = f && imageType(key, typeByPath[key]);
-      if (!type) return null;
-      const blob = new Blob([await f.async("arraybuffer")], { type });
-      imageIndex[key] = images.push({ ...at, alt, cap, ng, blob }) - 1;
+      const type = imageType(key, typeByPath[key]);
+      const pic = type && (await picture(key));
+      if (!pic) return null;
+      imageIndex[key] = images.push({ ...at, alt, cap, ng, h: pic.h, blob: new Blob([pic.data], { type }) }) - 1;
     }
     return imageIndex[key];
   }
@@ -299,7 +345,8 @@ async function parseEpub(file, onProgress) {
   }
   codex.sort((a, b) => a.ch - b.ch || a.s - b.s);
   const cover = await coverOf(pkg).catch(() => null);
-  return { v: BOOK_VERSION, id: `${title}|${author}`, title, author, cover, chapters, images, codex, toc: buildRows(toc, chapters) };
+  // The cover stays in the book too; its hash only lets the next build reuse it rather than fetch it again.
+  return { v: BOOK_VERSION, id: `${title}|${author}`, title, author, cover: cover?.blob || null, coverH: cover?.h, chapters, images, codex, toc: buildRows(toc, chapters) };
 }
 
 // Merge the table of contents with the chapters actually kept, so every chapter has exactly one row.
@@ -1022,10 +1069,10 @@ function setCovers() {
 async function fillCover(b) {
   const saved = await dbGet("epub").catch(() => null);
   if (saved?.id !== b.id) return;
-  b.cover = await openPackage(saved.blob).then(coverOf).catch(() => null);
+  b.cover = (await openPackage(saved.blob).then(coverOf).catch(() => null))?.blob || null;
   if (book !== b) return;
   setCovers();
-  dbPut("current", b).catch(() => {});
+  saveBook(b).catch(() => {});
 }
 function renderLibrary() {
   $("libSub").textContent = cloud === "in" ? "Your place follows you to every device you sign in on."
@@ -1053,15 +1100,16 @@ function showLoading(text) {
 }
 const hideLoading = () => ($("loading").hidden = true);
 // Parse an EPUB (a dropped file or a download from your library), save it on this device and show it.
-async function openBook(file, { cloud: cloudId = null, name = null } = {}) {
+async function openBook(file, { cloud: cloudId = null, name = null, media = null } = {}) {
   const parsed = await parseEpub(file, (i, n) => {
     $("loadingText").textContent = `Reading the book… ${i} / ${n}`;
     $("loadingBar").style.width = `${(i / n) * 100}%`;
-  });
+  }, media);
   parsed.cloud = cloudId;
-  await dbPut("current", parsed);
+  await saveBook(parsed);
   // Keep the original file too, so "Download EPUB" works offline and hands over the exact bytes.
-  await dbPut("epub", { id: parsed.id, blob: file, name: name || file.name || `${parsed.title}.epub` }).catch(() => {});
+  // A delta build never had the whole file on this device: Download EPUB fetches it from the library instead.
+  await dbPut("epub", media ? null : { id: parsed.id, blob: file, name: name || file.name || `${parsed.title}.epub` }).catch(() => {});
   // Same book (by title) = a newer build: keep the place. A different book starts where you left it, or at the
   // beginning; the place in the book it replaces is kept, so swapping back (even by accident) loses nothing.
   const prev = (state.bookId || "").split("|")[0];
@@ -1144,11 +1192,8 @@ async function cloudEpub() {
   if (!m) throw new Error("Your library is empty.");
   showLoading("Getting the EPUB…");
   try {
-    const parts = [];
-    for (let i = 0; i < m.parts; i++) {
-      parts.push(await apiBinary("GET", `/api/book/parts/${m.upload}/${i}`));
-      $("loadingBar").style.width = `${((i + 1) / m.parts) * 100}%`;
-    }
+    let done = 0;
+    const parts = await getAll(partPaths(m), () => ($("loadingBar").style.width = `${(++done / m.parts) * 100}%`));
     return { blob: new Blob(parts, { type: "application/epub+zip" }), name: m.name };
   } finally { hideLoading(); }
 }
@@ -1157,7 +1202,7 @@ async function downloadEpub() {
   let saved = await dbGet("epub").catch(() => null);
   let fetched = false;
   if (saved?.id !== book.id) {
-    if (cloud !== "in") { toast("This book was opened before downloads existed. Sign in, or open the file once more."); return; }
+    if (cloud !== "in") { toast("The EPUB isn't on this device. Sign in to get it from your library, or open the file once more."); return; }
     try { saved = await cloudEpub(); fetched = true; }
     catch (err) { toast(`Couldn't get the EPUB: ${err.message}`); return; }
   }
@@ -1204,6 +1249,16 @@ async function apiBinary(method, path, body) {
   return method === "GET" ? res.arrayBuffer() : res.json();
 }
 
+// Many binary GETs, four at a time, results in order.
+async function getAll(paths, onEach = () => {}) {
+  const out = [];
+  let next = 0;
+  const worker = async () => { while (next < paths.length) { const i = next++; out[i] = await apiBinary("GET", paths[i]); onEach(); } };
+  await Promise.all(Array.from({ length: Math.min(4, paths.length) }, worker));
+  return out;
+}
+const partPaths = (m) => Array.from({ length: m.parts }, (_, i) => `/api/book/parts/${m.upload}/${i}`);
+
 async function checkCloud() {
   try {
     const res = await fetch("/api/me", { cache: "no-store", credentials: "same-origin" });
@@ -1243,17 +1298,28 @@ async function fetchNewerBook() {
   const isUpdate = !!book;
   showLoading(isUpdate ? "Getting the newest chapters…" : "Getting your book…");
   try {
-    const parts = [];
-    for (let i = 0; i < m.parts; i++) {
-      parts.push(await apiBinary("GET", `/api/book/parts/${m.upload}/${i}`));
-      $("loadingBar").style.width = `${((i + 1) / m.parts) * 60}%`;
-    }
+    const { file, media } = await downloadBuild(m);
     const before = book?.chapters.length || 0;
-    await openBook(new Blob(parts, { type: "application/epub+zip" }), { cloud: m.upload, name: m.name });
+    await openBook(file, { cloud: m.upload, name: m.name, media });
     const added = book.chapters.length - before;
     if (isUpdate) toast(added > 0 ? `New build loaded: ${added} new section${added === 1 ? "" : "s"}.` : "New build of the book loaded.");
     return true;
   } finally { hideLoading(); }
+}
+// A build pushed in the delta layout comes down as its text pack plus only the pictures this device hasn't kept;
+// older uploads come down whole.
+async function downloadBuild(m) {
+  let done = 0;
+  const tick = (n) => () => ($("loadingBar").style.width = `${(++done / n) * 60}%`);
+  if (!m.pack || !m.media) return { file: new Blob(await getAll(partPaths(m), tick(m.parts)), { type: "application/epub+zip" }) };
+  const hashes = [...new Set(Object.values(m.media))];
+  const kept = await dbGetAll(hashes.map((h) => `img:${h}`)).catch(() => []);
+  const need = hashes.filter((h, i) => !kept[i]);
+  const got = await getAll([...m.pack, ...need].map((h) => `/api/book/files/${h}`), tick(m.pack.length + need.length));
+  const blobs = Object.fromEntries(hashes.map((h, i) => [h, kept[i]]));
+  need.forEach((h, i) => (blobs[h] = new Blob([got[m.pack.length + i]])));
+  const media = Object.fromEntries(Object.entries(m.media).map(([p, h]) => [p, { h, data: blobs[h] }]));
+  return { file: new Blob(got.slice(0, m.pack.length), { type: "application/zip" }), media };
 }
 async function uploadBook(file) {
   const upload = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1265,7 +1331,7 @@ async function uploadBook(file) {
     }
     await apiJSON("PUT", "/api/book", { upload, parts, size: file.size, name: file.name, title: book.title });
     book.cloud = upload;
-    await dbPut("current", book);
+    await saveBook(book);
     toast("Saved to your library. Your other devices get it next time they open Tachivel.");
   } catch (err) {
     toast(`Couldn't save the book to your library: ${err.message}`);
@@ -1540,7 +1606,7 @@ async function boot() {
     speechSynthesis.onvoiceschanged = loadVoices;
   }
   try {
-    const saved = await dbGet("current");
+    const saved = await loadBook();
     const epub = saved && saved.v !== BOOK_VERSION ? await dbGet("epub").catch(() => null) : null;
     if (saved?.v === BOOK_VERSION) showBook(saved);
     // Saved by an older Tachivel: read the kept EPUB again (same title, so the place stays).
