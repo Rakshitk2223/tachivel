@@ -1230,7 +1230,12 @@ async function syncNow({ manual = false } = {}) {
   try {
     let r;
     if (playing) { await push(); r = cloud === "error" ? "error" : "saved"; }
-    else r = (await fetchNewerBook()) ? "book" : (await pull()) ? "moved" : "same";
+    else {
+      // Always look for a newer place too: a new build (or one that failed to download) must not leave you on an old chapter.
+      let fresh = false, failed = false;
+      try { fresh = await fetchNewerBook(); } catch { failed = true; }
+      r = (await pull()) ? "moved" : failed ? "error" : fresh ? "book" : "same";
+    }
     if (r !== "error") setCloud("in"); // turns a red cloud green again after a good retry
     return r;
   } catch { setCloud("error"); return "error"; }
